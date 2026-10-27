@@ -2491,18 +2491,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawInputsRail(Canvas c) {
         if (contHead == null) drawContinueLabelPaints();
         float x = MARGIN * k, lineH = 56 * k * 0.95f, subH = 17 * k * 1.4f;
-        float block = 4 * k + 16 * k + 2 * lineH + 16 * k + subH;
+        float block = 4 * k + 16 * k + 2 * lineH + 16 * k + 2 * subH;
         float y = inputBar.top + (inputBar.height() - block) / 2;
         fill.setShader(null);
         fill.setColor(ACCENT);
         tmp.set(x, y, x + 48 * k, y + 4 * k);
         c.drawRoundRect(tmp, 2 * k, 2 * k, fill);
         y += 4 * k + 16 * k;
-        c.drawText(Ui.tr("Your"), x, y + lineBase(contHead, lineH), contHead);
+        c.drawText(Ui.tr("Plugged"), x, y + lineBase(contHead, lineH), contHead);
         y += lineH;
-        c.drawText(Ui.tr("inputs"), x, y + lineBase(contHeadItalic, lineH), contHeadItalic);
+        c.drawText(Ui.tr("in"), x, y + lineBase(contHeadItalic, lineH), contHeadItalic);
         y += lineH + 16 * k;
-        c.drawText(Ui.tr("HDMI sources on this TV"), x, y + lineBase(contSub, subH), contSub);
+        c.drawText(Ui.tr("Consoles that haven't seen"), x, y + lineBase(contSub, subH), contSub);
+        c.drawText(Ui.tr("daylight since 2023"), x, y + subH + lineBase(contSub, subH), contSub);
         drawFlatGlass(c, inputBar, 28 * k);
         int top = -1;
         for (int i = 0; i < drawerItems.size(); i++) if (drawerFocus[i].value > 0.02f && (top < 0 || drawerFocus[i].value > drawerFocus[top].value)) top = i;
@@ -2519,10 +2520,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** The input's colour, for its glow when focused (design 1's: PlayStation blue, Xbox green, Switch red, PC purple). */
     private static int inputGlow(String key) {
         switch (key == null ? "" : key) {
-            case "console-ps": return 0x8C285ADC;
-            case "console-xbox": return 0x8046AA28;
-            case "console-nintendo": return 0x80DC2832;
-            default: return 0x806E64DC;
+            case "console-ps": return 0xF2246BFF;   // vivid (the 50% versions read dim on the TV)
+            case "console-xbox": return 0xF241C83A;
+            case "console-nintendo": return 0xF2FF3048;
+            default: return 0xF2866CFF;
         }
     }
 
@@ -2556,10 +2557,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             android.graphics.RadialGradient glow = inputGlows.get(it.key);
             if (glow == null) {   // radial-gradient(420px 220px at 0% 120%, colour 0%, transparent 70%): made once, moved
                 int col = inputGlow(it.key);
-                glow = new android.graphics.RadialGradient(0, 0, 1, new int[] {col, col & 0x00FFFFFF}, new float[] {0, 0.7f}, Shader.TileMode.CLAMP);
+                glow = new android.graphics.RadialGradient(0, 0, 1, new int[] {col, (col & 0x00FFFFFF) | 0x66000000, col & 0x00FFFFFF},
+                        new float[] {0, 0.55f, 1}, Shader.TileMode.CLAMP);
                 inputGlows.put(it.key, glow);
             }
-            inputGlowM.setScale(420 * k, 220 * k);
+            inputGlowM.setScale(560 * k, 330 * k);
             inputGlowM.postTranslate(r.left, r.top + 1.2f * r.height());
             glow.setLocalMatrix(inputGlowM);
             fill.setColor(0xFF000000);
@@ -2574,7 +2576,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawRoundRect(tmp, rr - 1.5f * k, rr - 1.5f * k, border);
             border.setStrokeWidth(2 * k);
         }
-        float pad = 24 * k, d = 72 * k, a = on ? 1 : 0.6f;
+        float pad = 24 * k, d = 72 * k, a = on || f > 0.5f ? 1 : 0.6f;   // focused: full strength, signal or not
         float dx = r.left + pad, dy = r.top + pad;
         // The disc: radial-gradient(circle at 32% 26%, #4A4650, #25232A 48%, #121113), a shadow, a lit edge.
         tmp.set(dx, dy + 10 * k, dx + d, dy + d + 10 * k);
@@ -9178,6 +9180,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (reveal < 1 || !drawBentoPlate(c, i, p, b, overflow)) paintBentoCard(c, i, p, b, !overflow);
         if (overflow) drawCardTitle(c, i, p, f);   // the name that doesn't fit: "…", or sliding along when focused
+        if (f > 0.01f) drawCardDetails(c, i, f * reveal);
         if (reveal < 1) c.restore();   // the fade-in layer
         c.restore();
         if (f > 0.01f) {
@@ -9244,18 +9247,75 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float pad = (resume ? 20 : 16) * k, iconD = (big ? 48 : resume ? 40 : 36) * k;
         Bitmap art = HomeApps.serviceArt(getContext(), p.app);
         if (art != null) drawRoundIcon(c, art, base.left + pad, base.top + pad, iconD);
-        String chip = i < bentoChips.length ? bentoChips[i] : "";
-        if (!resume && bw >= 400 * k && chip != null && !chip.isEmpty()) {   // the large and wide cards only, beside the icon
-            feedPaints();
-            bentoChip(c, base.left + pad + (art != null ? iconD + 12 * k : 0), base.top + pad + iconD / 2, chip);
-        }
         if (withTitle) drawCardTitle(c, i, p, 0);
+        c.restore();
+    }
+
+    /**
+     * The focused card's details (fading in with focus f): its chip ("New this week", "New season") beside the icon, and
+     * its line (S2 · ★7.6, or Continue Watching's S1 · Opened yesterday). At rest a card shows its art, icon and name only.
+     */
+    private void drawCardDetails(Canvas c, int i, float f) {
+        RectF base = cardRects[i];
+        boolean big = bentoBig[i], resume = i < contShown;
+        float pad = (resume ? 20 : 16) * k, iconD = (big ? 48 : resume ? 40 : 36) * k;
+        int a = Math.round(255 * f);
+        String chip = i < bentoChips.length ? bentoChips[i] : "";
+        if (!resume && base.width() >= 400 * k && chip != null && !chip.isEmpty()) {
+            feedPaints();
+            int c0 = c.saveLayerAlpha(base.left, base.top, base.right, base.top + 2 * pad + iconD, a);
+            bentoChip(c, base.left + pad + iconD + 12 * k, base.top + pad + iconD / 2, chip);
+            c.restoreToCount(c0);
+        }
         String line = i < bentoLines.length ? bentoLines[i] : "";
         if (!line.isEmpty()) {
             TextPaint meta = metaPaint(i);
-            c.drawText(TextUtils.ellipsize(line, meta, bw - 2 * pad, TextUtils.TruncateAt.END).toString(), base.left + pad, base.bottom - pad, meta);
+            int old = meta.getAlpha();
+            meta.setAlpha(Math.round(old * f));
+            drawMetaLine(c, line, base.left + pad, base.bottom - pad, meta, base.width() - 2 * pad, f);
+            meta.setAlpha(old);
         }
+    }
+
+    private final Path starPath = new Path();
+    private float starPathSize;
+    private LinearGradient starGloss;
+
+    /** A line with "★7.6": the ★ drawn as a gold 3D star (lit from the top), the rest as text, cut with "…" to fit. */
+    private void drawMetaLine(Canvas c, String line, float x, float base, TextPaint p, float maxW, float f) {
+        int si = line.indexOf('\u2605');
+        if (si < 0) {
+            c.drawText(TextUtils.ellipsize(line, p, maxW, TextUtils.TruncateAt.END).toString(), x, base, p);
+            return;
+        }
+        String before = line.substring(0, si), after = line.substring(si + 1);
+        float bw = p.measureText(before), size = p.getTextSize() * 0.95f, cap = Ui.halfCap(p) * 2;
+        c.drawText(before, x, base, p);
+        float sx = x + bw, cy = base - cap / 2;
+        if (starPathSize != size) {   // a 5-point star, made once per size, centred on 0,0
+            starPath.reset();
+            for (int j = 0; j < 10; j++) {
+                double ang = Math.PI / 5 * j - Math.PI / 2;
+                float rr = (j % 2 == 0 ? 0.5f : 0.22f) * size;
+                float px = (float) Math.cos(ang) * rr, py = (float) Math.sin(ang) * rr;
+                if (j == 0) starPath.moveTo(px, py); else starPath.lineTo(px, py);
+            }
+            starPath.close();
+            starGloss = new LinearGradient(0, -size / 2, 0, size / 2, new int[] {0xFFFFF1A8, 0xFFF5B82E, 0xFFB7790F},
+                    new float[] {0, 0.5f, 1}, Shader.TileMode.CLAMP);
+            starPathSize = size;
+        }
+        c.save();
+        c.translate(sx + size / 2, cy + size * 0.04f);
+        fill.setColor(0xFF000000);
+        fill.setShader(starGloss);
+        fill.setAlpha(Math.round(255 * f));
+        c.drawPath(starPath, fill);
+        fill.setShader(null);
+        fill.setAlpha(255);
         c.restore();
+        float tx = sx + size + 3 * k;
+        c.drawText(TextUtils.ellipsize(after, p, Math.max(0, x + maxW - tx), TextUtils.TruncateAt.END).toString(), tx, base, p);
     }
     private final Matrix shadeMatrix = new Matrix();
     /** Resting cards as GPU bitmaps (CardCache): Home's and For You's (this layer), and Apps' icons (the sheet's). */

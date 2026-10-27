@@ -54,10 +54,10 @@ public final class ContinueLogic {
         return out;
     }
 
-    /** The card's line: "Season 2 · Opened yesterday", or for a movie just when it was opened. */
+    /** The card's line: "S2 · Opened yesterday", or for a movie just when it was opened. */
     public static String line(String kind, int season, long at, long now, TimeZone zone) {
         String opened = opened(at, now, zone);
-        return "tv".equals(kind) && season > 0 ? "Season " + season + " · " + opened : opened;
+        return "tv".equals(kind) && season > 0 ? "S" + season + " · " + opened : opened;
     }
 
     /** "Opened just now", "5 min ago", "2 h ago" (today), "yesterday", a weekday this week, else the date. */

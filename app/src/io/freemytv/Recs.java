@@ -1976,11 +1976,12 @@ final class Recs {
         if ("movie".equals(p.kind)) {
             if (p.runtime > 0) parts.add(duration(p.runtime));
         } else if (p.season > 0) {
-            parts.add(Ui.trf("Season {n}", "n", p.season));
+            parts.add("S" + p.season);   // short: "S3" (Home's cards)
             if (p.seasonName != null && !p.seasonName.isEmpty()) parts.add(p.seasonName);
         }
         // The service's logo is on the card: its name gives way to the title's rating (TMDB's, only with enough votes).
-        if (p.rating > 0 && p.votes >= 10) parts.add("\u2605 " + String.format(Ui.locale(), "%.1f", p.rating) + "/10");
+        // "★7.6": the card draws the ★ as its 3D star icon (HomeView.drawMetaLine).
+        if (p.rating > 0 && p.votes >= 10) parts.add("\u2605" + String.format(Ui.locale(), "%.1f", p.rating));
         String service = serviceName(p);
         if (withService && service != null && !service.isEmpty()) parts.add(service);
         return String.join(" · ", parts);

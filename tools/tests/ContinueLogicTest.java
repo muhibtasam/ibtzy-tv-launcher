@@ -65,8 +65,8 @@ public class ContinueLogicTest {
         check("this week", ContinueLogic.opened(NOW - 3 * DAY, NOW, ZONE).equals("Opened Sat"));
         check("older", ContinueLogic.opened(NOW - 12 * DAY, NOW, ZONE).equals("Opened Oct 15"));
 
-        // With its season: "Season 2 · Opened yesterday".
-        check("season line", ContinueLogic.line("tv", 2, NOW - 21 * HOUR, NOW, ZONE).equals("Season 2 · Opened yesterday"));
+        // With its season: "S2 · Opened yesterday".
+        check("season line", ContinueLogic.line("tv", 2, NOW - 21 * HOUR, NOW, ZONE).equals("S2 · Opened yesterday"));
         check("movie line", ContinueLogic.line("movie", 0, NOW - 2 * HOUR, NOW, ZONE).equals("Opened 2 h ago"));
 
         System.out.println(failed == 0 ? "ContinueLogicTest: all passed" : "ContinueLogicTest: " + failed + " failed");
