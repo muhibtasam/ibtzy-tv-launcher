@@ -2515,6 +2515,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Matrix discGlossM = new Matrix();
     private TextPaint inputName, inputStatus;
 
+    private final Map<String, android.graphics.RadialGradient> inputGlows = new HashMap<>();
+    private final Matrix inputGlowM = new Matrix();
+
+    /** The input's colour for its focus glow: vivid PlayStation blue, Xbox green, Switch red, PC purple. */
+    private static int inputGlow(String key) {
+        switch (key == null ? "" : key) {
+            case "console-ps": return 0xF2246BFF;
+            case "console-xbox": return 0xF241C83A;
+            case "console-nintendo": return 0xF2FF3048;
+            default: return 0xF2866CFF;
+        }
+    }
+
     /** The logo's colour where it is drawn as a symbol (PC). */
     private static int inputInk(String key) {
         switch (key == null ? "" : key) {
@@ -2542,13 +2555,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fill.setShader(null);
             fill.setColor(Ui.alpha(0xFF18161A, f));
             c.drawRoundRect(r, rr, rr, fill);
-            // The console's own brand gradient (the old cards'), at 50% over the dark: vivid, not loud.
-            LinearGradient[] g = consoleShaders(it.key == null ? "console-pc" : it.key, r);
-            shaderMatrix.setTranslate(r.left, r.top);
-            g[0].setLocalMatrix(shaderMatrix);
+            // Home Design V1's glow from the bottom left, grown to half and half: the console's colour over half the
+            // segment, fading into the dark over the other half (the mockup's was about 20/80).
+            android.graphics.RadialGradient glow = inputGlows.get(it.key);
+            if (glow == null) {
+                int col = inputGlow(it.key);
+                glow = new android.graphics.RadialGradient(0, 0, 1, new int[] {col, (col & 0x00FFFFFF) | 0xCC000000, col & 0x00FFFFFF},
+                        new float[] {0, 0.5f, 0.85f}, Shader.TileMode.CLAMP);
+                inputGlows.put(it.key, glow);
+            }
+            inputGlowM.setScale(r.width() * 1.05f, r.height() * 1.6f);
+            inputGlowM.postTranslate(r.left, r.bottom + 0.15f * r.height());
+            glow.setLocalMatrix(inputGlowM);
             fill.setColor(0xFF000000);
-            fill.setShader(g[0]);
-            fill.setAlpha(Math.round(128 * f));
+            fill.setShader(glow);
+            fill.setAlpha(Math.round(255 * f));
             c.drawRoundRect(r, rr, rr, fill);
             fill.setShader(null);
             fill.setAlpha(255);
