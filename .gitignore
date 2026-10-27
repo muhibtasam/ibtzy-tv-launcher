@@ -1,0 +1,20 @@
+# Your settings and signing key stay on your machine
+config.properties
+*.keystore
+*.idsig
+
+# Build output
+out/
+*.apk
+*.ipk
+*.wgt
+__pycache__/
+
+# macOS
+.DS_Store
+tools/.i18n-cache.json
+
+# Local revert points (kept on disk; git history replaces them)
+backup-*/
+snapshots/
+.claude/settings.local.json

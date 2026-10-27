@@ -1,0 +1,40 @@
+02:07:14       package=com.netflix.ninja
+02:07:14       state=PlaybackState {state=PLAYING(3), position=2133, buffered position=0, speed=1.0, updated=17231397, actions=1049466, custom actions=[], active item id=-1, error=null}
+02:07:14       metadata: null
+02:07:24       package=com.netflix.ninja
+02:07:24       state=PlaybackState {state=PLAYING(3), position=12212, buffered position=0, speed=1.0, updated=17241473, actions=1049466, custom actions=[], active item id=-1, error=null}
+02:07:24       metadata: null
+02:07:34       package=com.netflix.ninja
+02:07:34       state=PlaybackState {state=PLAYING(3), position=34942, buffered position=0, speed=1.0, updated=17251666, actions=1049466, custom actions=[], active item id=-1, error=null}
+02:07:34       metadata: null
+02:07:44       package=com.netflix.ninja
+02:07:44       state=PlaybackState {state=PLAYING(3), position=45097, buffered position=0, speed=1.0, updated=17261818, actions=1049466, custom actions=[], active item id=-1, error=null}
+02:07:44       metadata: null
+02:07:55       package=com.netflix.ninja
+02:07:55       state=PlaybackState {state=PLAYING(3), position=55341, buffered position=0, speed=1.0, updated=17272061, actions=1049466, custom actions=[], active item id=-1, error=null}
+02:07:55       metadata: null
+02:08:05       package=com.netflix.ninja
+02:08:05       state=PlaybackState {state=PLAYING(3), position=65536, buffered position=0, speed=1.0, updated=17282257, actions=1049466, custom actions=[], active item id=-1, error=null}
+02:08:05       metadata: null
+02:08:25       package=com.amazon.amazonvideo.livingroom
+02:08:25       state=PlaybackState {state=PLAYING(3), position=0, buffered position=0, speed=1.0, updated=17298895, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:08:25       metadata: size=7, description=PrimeVideo, null, null
+02:08:35       package=com.amazon.amazonvideo.livingroom
+02:08:35       state=PlaybackState {state=PLAYING(3), position=70228, buffered position=0, speed=1.0, updated=17310031, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:08:35       metadata: size=7, description=PrimeVideo, null, null
+02:08:45       package=com.amazon.amazonvideo.livingroom
+02:08:45       state=PlaybackState {state=PLAYING(3), position=70228, buffered position=0, speed=1.0, updated=17310031, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:08:45       metadata: size=7, description=PrimeVideo, null, null
+02:08:56       package=com.amazon.amazonvideo.livingroom
+02:08:56       state=PlaybackState {state=PLAYING(3), position=70228, buffered position=0, speed=1.0, updated=17310031, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:08:56       metadata: size=7, description=PrimeVideo, null, null
+02:09:06       package=com.amazon.amazonvideo.livingroom
+02:09:06       state=PlaybackState {state=PLAYING(3), position=70228, buffered position=0, speed=1.0, updated=17310031, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:09:06       metadata: size=7, description=PrimeVideo, null, null
+02:09:16       package=com.amazon.amazonvideo.livingroom
+02:09:16       state=PlaybackState {state=PLAYING(3), position=70228, buffered position=0, speed=1.0, updated=17310031, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:09:16       metadata: size=7, description=PrimeVideo, null, null
+02:09:26       package=com.amazon.amazonvideo.livingroom
+02:09:26       state=PlaybackState {state=PLAYING(3), position=70228, buffered position=0, speed=1.0, updated=17310031, actions=1049455, custom actions=[], active item id=-1, error=null}
+02:09:26       metadata: size=7, description=PrimeVideo, null, null
+DONE
