@@ -2511,21 +2511,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (top >= 0) drawInputSegment(c, top);
     }
 
-    private final Map<String, android.graphics.RadialGradient> inputGlows = new HashMap<>();
-    private final Matrix inputGlowM = new Matrix();
     private android.graphics.RadialGradient discGloss;
     private final Matrix discGlossM = new Matrix();
     private TextPaint inputName, inputStatus;
-
-    /** The input's colour, for its glow when focused (design 1's: PlayStation blue, Xbox green, Switch red, PC purple). */
-    private static int inputGlow(String key) {
-        switch (key == null ? "" : key) {
-            case "console-ps": return 0xF2246BFF;   // vivid (the 50% versions read dim on the TV)
-            case "console-xbox": return 0xF241C83A;
-            case "console-nintendo": return 0xF2FF3048;
-            default: return 0xF2866CFF;
-        }
-    }
 
     /** The logo's colour where it is drawn as a symbol (PC). */
     private static int inputInk(String key) {
@@ -2554,19 +2542,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fill.setShader(null);
             fill.setColor(Ui.alpha(0xFF18161A, f));
             c.drawRoundRect(r, rr, rr, fill);
-            android.graphics.RadialGradient glow = inputGlows.get(it.key);
-            if (glow == null) {   // radial-gradient(420px 220px at 0% 120%, colour 0%, transparent 70%): made once, moved
-                int col = inputGlow(it.key);
-                glow = new android.graphics.RadialGradient(0, 0, 1, new int[] {col, (col & 0x00FFFFFF) | 0x66000000, col & 0x00FFFFFF},
-                        new float[] {0, 0.55f, 1}, Shader.TileMode.CLAMP);
-                inputGlows.put(it.key, glow);
-            }
-            inputGlowM.setScale(560 * k, 330 * k);
-            inputGlowM.postTranslate(r.left, r.top + 1.2f * r.height());
-            glow.setLocalMatrix(inputGlowM);
+            // The console's own brand gradient (the old cards'), at 50% over the dark: vivid, not loud.
+            LinearGradient[] g = consoleShaders(it.key == null ? "console-pc" : it.key, r);
+            shaderMatrix.setTranslate(r.left, r.top);
+            g[0].setLocalMatrix(shaderMatrix);
             fill.setColor(0xFF000000);
-            fill.setShader(glow);
-            fill.setAlpha(Math.round(255 * f));
+            fill.setShader(g[0]);
+            fill.setAlpha(Math.round(128 * f));
             c.drawRoundRect(r, rr, rr, fill);
             fill.setShader(null);
             fill.setAlpha(255);
@@ -9178,8 +9160,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             drawSkeletonSlot(c, base, big, 1 - reveal);
             c.saveLayerAlpha(base.left - 4 * k, base.top - 4 * k, base.right + 4 * k, base.bottom + 4 * k, Math.round(255 * reveal));
         }
-        if (reveal < 1 || !drawBentoPlate(c, i, p, b, overflow)) paintBentoCard(c, i, p, b, !overflow);
-        if (overflow) drawCardTitle(c, i, p, f);   // the name that doesn't fit: "…", or sliding along when focused
+        if (reveal < 1 || !drawBentoPlate(c, i, p, b, true)) paintBentoCard(c, i, p, b, false);
+        drawCardTitle(c, i, p, f);   // over the cached card: it rests at the bottom and rises with focus
         if (f > 0.01f) drawCardDetails(c, i, f * reveal);
         if (reveal < 1) c.restore();   // the fade-in layer
         c.restore();
@@ -9387,7 +9369,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float pad = (resume ? 20 : 16) * k, textW = base.width() - 2 * pad;
         String line = i < bentoLines.length ? bentoLines[i] : "";
         float metaBase = base.bottom - pad;
-        float base0 = line.isEmpty() ? metaBase : metaBase - metaPaint(i).getTextSize() - (big ? 12 : 9) * k;
+        // At rest the name sits at the bottom; focused, it slides up (with the focus spring) to make room for its line.
+        float rise = line.isEmpty() ? 0 : (metaPaint(i).getTextSize() + (big ? 12 : 9) * k) * Ui.clamp(f);
+        float base0 = metaBase - rise;
         String t = p.title == null ? "" : p.title;
         if (titleOver[i] && i == cardIndex && zone == Z_CARDS && f > 0.9f) {
             drawMarquee(c, t, title, base.left + pad, base0, textW, title.measureText(t));
