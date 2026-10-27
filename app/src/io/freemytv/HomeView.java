@@ -443,6 +443,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+
     /** One layer of the screen. It draws in full-screen coordinates: the glass needs each pixel's real position. */
     private final class Layer extends View {
         private final int kind;
@@ -450,6 +451,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Layer(Context c, int kind) {
             super(c);
             this.kind = kind;
+        }
+
+        // Home's layer fades (55%) as the page scrolls: its cards are single cached bitmaps that don't overlap, so the
+        // fade can go to each drawing instead of an offscreen copy of the whole layer on every frame.
+        @Override public boolean hasOverlappingRendering() {
+            return kind != HERO;
         }
 
         @Override protected void onDraw(Canvas c) {
@@ -543,6 +550,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Home cards 75.6 → 27.1 ms, Apps 82.4 → 27.2, Movies 67.2 → 46.9, tab switch 96.2 → 63.5; the dock was within
         // its run-to-run noise (38–68 ms either way). Older GPUs (Android 8 to 11) never had them either.
         for (View v : new View[] {heroLayer, status, platter, platterNext, tiles, drawerLayer, sheetLayer, ccLayer}) v.setLayerType(LAYER_TYPE_NONE, null);
+        // Except the background (2026-10-28): its photo, a small image stretched over the whole screen through a filter,
+        // cost the GPU ~12 ms on every frame of a focus move (Home: 22.7 ms frames, 10.9 without it). In a layer it's
+        // rendered once and composited as is; only its crossfades redraw it.
+        sky.setLayerType(LAYER_TYPE_HARDWARE, null);
         topFade.setVisibility(INVISIBLE);
         for (View v : new View[] {sky, heroLayer, status, topFade, platter, platterNext, tiles, drawerLayer, sheetLayer, ccLayer, toastLayer, bootLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
@@ -1646,6 +1657,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         imagePaint.setAlpha(Math.round(255 * Math.min(1, alpha)));
         c.drawBitmap(image, null, screen, imagePaint);
     }
+
 
     // MARK: - Hero
 
@@ -3105,7 +3117,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (aimApps(snap)) gridDirty = true;
         heroChanged |= aim(cardFocus, !sheetOpen && zone == Z_CARDS ? cardIndex : -1, snap) | topChanged;
         // Explore's background treatment: its grid, and the drawer's inputs and shortcuts.
-        exploreDim.target = (bento() && !sheetOpen && zone == Z_CARDS) || (drawerOpen && !sheetOpen && zone == Z_DRAWER)
+        // Not for Home Design V1's Inputs: the page dims as it scrolls instead (dimming the background too redrew it,
+        // full screen, on every frame of the scroll).
+        exploreDim.target = (bento() && !sheetOpen && zone == Z_CARDS) || (drawerOpen && !sheetOpen && zone == Z_DRAWER && !inputRail)
                 || (appsInTab() && sheetOpen) ? 1 : 0;
         if (snap) exploreDim.snap(exploreDim.target);
         statusChanged |= topChanged;
@@ -6602,19 +6616,58 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** The search bar: the app's liquid glass (as the weather pill), focused like the Control Center's tiles. */
+    private final RectF searchRest = new RectF();
+
+    /**
+     * Apps' search bar. Resting (not focused, not typing): from the shared cache, as the cards. Its liquid glass was
+     * painted again on every focus move in the grid below it: 22 ms frames there, 12 without it.
+     */
     private void drawSearchBar(Canvas c, float left, float right, float shift) {
+        float f = Ui.clamp(searchFocus.value), sc = 1 + 0.012f * f;
+        float cx = (left + right) / 2, cy = (aSearchTop + aSearchH / 2) * k - shift, hh = aSearchH * k / 2;
+        searchRest.set(left, cy - hh, right, cy + hh);
+        if (searchRest.bottom * sc < aClipTop * k) return;
+        // The glass shows the background behind it: cached per background, never during a crossfade (it would keep a frame).
+        long sig = 17L * (dark() > 0.5f ? 2 : 1) + Float.floatToIntBits(right - left) * 31L + Float.floatToIntBits(k)
+                + 131L * System.identityHashCode(bgTo);
+        if (f > 0.01f) {   // the focused bar's deeper shadow, under the cached one
+            tmp.set(cx - (right - left) / 2 * sc, cy - hh * sc + (8 + 8 * f) * k, cx + (right - left) / 2 * sc, cy + hh * sc + (8 + 8 * f) * k);
+            shadow.setColor(Ui.alpha(0xFF000000, 0.18f * f));
+            shadows.drawCached(c, tmp, hh * sc, SHADOW_BLUR * k, shadow);
+        }
+        c.save();
+        c.scale(sc, sc, cx, cy);
+        boolean cached = bgFadeAt == 0 && appCards.draw(c, 0x5EA4C4L, sig, searchRest, 48, pc -> paintSearchBase(pc, searchRest));
+        c.restore();
+        paintSearchBar(c, left, right, shift, !cached);
+    }
+
+    /** The search bar's shadow and liquid glass at rest (cached: the expensive part, the same in every state). */
+    private void paintSearchBase(Canvas c, RectF r) {
+        float rr = r.height() / 2;
+        tmp.set(r);
+        tmp.offset(0, 8 * k);
+        shadow.setColor(Ui.alpha(0xFF000000, 0.22f));
+        shadows.draw(c, tmp, rr, SHADOW_BLUR * k, shadow);
+        scene.liquid(c, r, rr, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k, tone(0.6f, 0.45f), 1);
+    }
+
+    /** The search bar; `withBase`: its shadow and glass too (else they came from the cache, drawn just before). */
+    private void paintSearchBar(Canvas c, float left, float right, float shift, boolean withBase) {
         float f = Ui.clamp(searchFocus.value), s = 1 + 0.012f * f;
         float cy = (aSearchTop + aSearchH / 2) * k - shift, cx = (left + right) / 2;
         float hw = (right - left) / 2 * s, hh = aSearchH * k / 2 * s;
         searchRect.set(cx - hw, cy - hh, cx + hw, cy + hh);
         if (searchRect.bottom < aClipTop * k) return;   // scrolled away under the tabs: nothing to draw
         float r = hh;
-        tmp.set(searchRect);
-        tmp.offset(0, (8 + 8 * f) * k);
-        shadow.setColor(Ui.alpha(0xFF000000, 0.22f + 0.18f * f));
-        shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
-        scene.liquid(c, searchRect, r, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
-                tone(0.6f, 0.45f), 1);
+        if (withBase) {
+            tmp.set(searchRect);
+            tmp.offset(0, (8 + 8 * f) * k);
+            shadow.setColor(Ui.alpha(0xFF000000, 0.22f + 0.18f * f));
+            shadows.draw(c, tmp, r, SHADOW_BLUR * k, shadow);
+            scene.liquid(c, searchRect, r, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
+                    tone(0.6f, 0.45f), 1);
+        }
         glassBody(c, searchRect, r, 0.2f * f);
         focusOutline(c, searchRect, r, f);
         glassEdge(c, searchRect, r, 0.3f + 0.7f * f, (1.2f + 1.3f * f) * k);
@@ -7964,14 +8017,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fill.setShader(null);
             fill.setColorFilter(null);
         }
-        imagePaint.setColorFilter(v);
+        // Explore's dim on a photo at rest: folded into the photo's own drawing (a full-screen dark rect over it was one
+        // more full-screen pass for the GPU on every frame of a focus move in the grid).
+        float dim = Ui.clamp(exploreDim.value);
+        boolean foldDim = dim > 0.002f && v == null && bgTo != null && !fading && tab != FOR_YOU_TAB;
+        imagePaint.setColorFilter(foldDim ? veil(0.32f * dim, 0xFF000000) : v);
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
         if (tab == FOR_YOU_TAB) { long ht = System.nanoTime(); drawHeroArt(c); if (gamesOn) gameFrame(System.nanoTime() - ht, true); }
         // In Explore's grid: a soft dark veil over the frosted background, so the artwork stands out.
-        float dim = Ui.clamp(exploreDim.value);
-        if (dim > 0.002f) {
+        if (dim > 0.002f && !foldDim) {
             fill.setShader(null);
             fill.setColor(Ui.alpha(0xFF000000, 0.32f * dim));
             c.drawRect(screen, fill);
@@ -8001,9 +8057,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // material as the weather pill. With the remote on the tabs it gives way to the white focus pill below.
             if (i == tab && focus < 0.99f) {
                 float rr = r.height() / 2;
-                scene.liquid(c, r, rr, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
-                        tone(0.6f, 0.45f), 1 - focus);
-                glassEdge(c, r, rr, 0.5f * (1 - focus), 1.2f * k);
+                // At rest, from the cache: its liquid glass was rendered again by the GPU on every frame of a focus move
+                // in the grid below. Per background (it shows what's behind it); live while one crossfades.
+                long sig = 17L + 31L * System.identityHashCode(bgTo) + Float.floatToIntBits(r.width()) * 7L
+                        + Float.floatToIntBits(r.left) * 3L + Float.floatToIntBits(r.top) + (dark() > 0.5f ? 1 : 0);
+                if (focus > 0.002f || bgFadeAt != 0 || !heroCards.draw(c, 0x7AB000L + i, sig, r, 24, pc -> {
+                    scene.liquid(pc, r, rr, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k, tone(0.6f, 0.45f), 1);
+                    glassEdge(pc, r, rr, 0.5f, 1.2f * k);
+                })) {
+                    scene.liquid(c, r, rr, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
+                            tone(0.6f, 0.45f), 1 - focus);
+                    glassEdge(c, r, rr, 0.5f * (1 - focus), 1.2f * k);
+                }
             }
             if (i == tab && focus > 0.01f) {
                 float s = 1 + 0.05f * focus;
@@ -8289,6 +8354,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private boolean followFade;
     private final Runnable followRested = () -> {
+        // Focus left the cards before it rested (down to the dock and Inputs): no crossfade then (one started under the
+        // page's scroll and doubled its frame time).
+        if (zone != Z_CARDS || drawerOpen) return;
         followCard();
         wake();
     };
