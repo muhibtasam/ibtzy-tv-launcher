@@ -451,9 +451,26 @@ final class HomeApps {
     }
 
     /** The official icon bundled for this dock key (tools/fetch_dock_icons.py), or null. */
-    private static synchronized Bitmap dockArt(Context c, String key) {
+    private static Bitmap dockArt(Context c, String key) {
         if (key == null || key.isEmpty()) return null;
-        if (ART.containsKey(key)) return ART.get(key);
+        // Read without a lock: cards call this while drawing, and the class lock is held by the icon builders
+        // (dockIcon, appTile...) for long stretches in the background: a For You frame waited 230-400 ms on it.
+        Object known = ART_READY.get(key);
+        if (known != null) return known == NO_ART ? null : (Bitmap) known;
+        synchronized (ART) {
+            known = ART_READY.get(key);
+            if (known != null) return known == NO_ART ? null : (Bitmap) known;
+            Bitmap b = loadDockArt(c, key);
+            ART.put(key, b);
+            ART_READY.put(key, b == null ? NO_ART : b);
+            return b;
+        }
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object> ART_READY = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Object NO_ART = new Object();
+
+    private static Bitmap loadDockArt(Context c, String key) {
         Bitmap b = null;
         try (InputStream in = c.getAssets().open("dock/" + key + ".png")) {
             b = BitmapFactory.decodeStream(in);
@@ -466,7 +483,6 @@ final class HomeApps {
             }
         } catch (IOException ignored) {
         }
-        ART.put(key, b);
         return b;
     }
 

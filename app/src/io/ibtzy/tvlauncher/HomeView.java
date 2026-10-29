@@ -8300,13 +8300,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float sel = Ui.clamp(tabSel(i).value), open = Ui.clamp(tabOpen(i).value), lift = 0;   // focus: the ring only
             cell.set(topRects[i]);
             cell.offset(0, -lift);
-            // Its shadow: dark under a tile, warm under the capsule (cached blurs: the same shapes once settled).
+            // Its shadow: dark under a tile, warm under the capsule. One blur size for every frame of the stretch (a blur
+            // that changed with it was a new mask built on every frame: 6-15 ms of the main thread per frame).
             tmp.set(cell);
-            float spread = (8 + 4 * sel) * k;
-            tmp.inset(spread, spread);
+            tmp.inset(10 * k, 10 * k);
             tmp.offset(0, (12 + 8 * sel) * k + lift);
             shadowDeep.setColor(blend(0xB3000000, 0x73F3E2BE, sel));
-            shadows.drawCached(c, tmp, rr, (24 + 16 * sel) * k, shadowDeep);
+            shadows.drawCached(c, tmp, rr, 32 * k, shadowDeep);
             if (sel < 0.999f) {
                 shaderIn(tabGraphite, cell);
                 fill.setShader(tabGraphite);
