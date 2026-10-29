@@ -4971,8 +4971,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.set(gvRect.left, gvRect.top + 16 * k, gvRect.right, gvRect.bottom + 16 * k);
         shadowDeep.setColor(0xB3000000);
         shadows.draw(c, tmp, 28 * k, DEEP_BLUR * k, shadowDeep);
-        // The textless square art first (the characters, cut to this shape), then the wide key art.
-        String art = !t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster;
+        // Steam's official key art first (3840 px, no logo), then the textless square art (full size), the wide art.
+        String art = !t.keyArt.isEmpty() ? t.keyArt : !t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster;
         Bitmap b = Discover.get(getContext()).card(art, true, Math.round(artW * k), Math.round(fullH * k), 0);
         fill.setShader(null);
         if (b != null) drawCoveredRound(c, b, gvRect, 28 * k, 1);   // rounded by the shader (no clip)

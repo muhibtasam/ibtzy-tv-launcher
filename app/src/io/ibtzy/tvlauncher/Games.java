@@ -645,7 +645,7 @@ final class Games {
         return e == null || e.optInt("v") < ART_VERSION || now - e.optLong("at") > ART_TTL || now < e.optLong("at");
     }
 
-    private static final int ART_VERSION = 3;   // 2: the square textless first, else the wide key art; 3: icons
+    private static final int ART_VERSION = 4;   // 2: the square textless first; 3: icons; 4: Steam's key art, full sizes
 
     private boolean viewsDue(int id, long now) {
         JSONObject e = viewsById.get(id);
@@ -673,6 +673,7 @@ final class Games {
                     if (!a.optString("h").isEmpty()) t.backdrop = a.optString("h");
                     t.square = a.optString("s");
                     t.icon = a.optString("i");
+                    t.keyArt = a.optString("k");
                 }
                 JSONObject v = viewsById.get(t.id);
                 if (v != null) t.views = v.optInt("v");
@@ -686,22 +687,58 @@ final class Games {
         long now = System.currentTimeMillis();
         try {
             int game = sgdbGame(t.title, key);
-            String g = "", h = "", sq = "", ic = "";
+            String g = "", h = "", sq = "", ic = "", key4k = steamHero(t.title);
             if (game > 0) {
                 String opts = "types=static&nsfw=false&humor=false";
                 g = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=600x900&styles=no_logo&" + opts, key), false);
                 if (g.isEmpty()) g = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=600x900&" + opts, key), false);
                 h = sgdbPick(sgdb("/heroes/game/" + game + "?" + opts, key), true);
                 // The square: textless art; else "" (the top section then cuts the wide key art, never a boxed cover).
-                sq = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=1024x1024,512x512&styles=no_logo&" + opts, key), false);
+                sq = sgdbFull(sgdb("/grids/game/" + game + "?dimensions=1024x1024,512x512&styles=no_logo&" + opts, key));
                 ic = sgdbPick(sgdb("/icons/game/" + game + "?" + opts, key), false);   // its icon (a PNG): the radar's pins
             }
-            artById.put(t.id, new JSONObject().put("g", g).put("h", h).put("s", sq).put("i", ic).put("at", now).put("v", ART_VERSION));
+            artById.put(t.id, new JSONObject().put("g", g).put("h", h).put("s", sq).put("i", ic).put("k", key4k).put("at", now).put("v", ART_VERSION));
             Startup.games("art " + t.title + ": " + (game <= 0 ? "not on SteamGridDB" : (g.isEmpty() ? "" : "portrait ") + (h.isEmpty() ? "" : "wide ") + (sq.isEmpty() ? "" : "square")));
         } catch (Exception e) {
             AppLog.w("games art " + t.title + ": " + e.getMessage());
             retryLater(artById, t.id, now - ART_TTL + RETRY_AFTER);
         }
+    }
+
+    /**
+     * The game's official key art from its Steam page (library_hero: 3840 × 1240, no logo), when it's on Steam under
+     * exactly its name and has one; "" otherwise.
+     */
+    private static String steamHero(String title) {
+        try {
+            JSONArray items = new JSONObject(get("https://store.steampowered.com/api/storesearch/?cc=us&l=english&term="
+                    + URLEncoder.encode(title, "UTF-8"))).optJSONArray("items");
+            for (int i = 0; items != null && i < items.length() && i < 5; i++) {
+                JSONObject it = items.optJSONObject(i);
+                if (it == null || !GamesLogic.sameName(it.optString("name"), title) || it.optInt("id") <= 0) continue;
+                String url = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/" + it.optInt("id") + "/library_hero.jpg";
+                HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                c.setRequestMethod("HEAD");
+                c.setConnectTimeout(5000);
+                c.setReadTimeout(8000);
+                try {
+                    return c.getResponseCode() == 200 ? url : "";
+                } finally {
+                    c.disconnect();
+                }
+            }
+        } catch (Exception e) {
+            AppLog.w("games steam art " + title + ": " + e.getMessage());
+        }
+        return "";
+    }
+
+    /** The first image at its full size (https only): the top section's square, drawn big. */
+    private static String sgdbFull(JSONObject o) {
+        JSONArray a = o.optJSONArray("data");
+        JSONObject x = a == null || a.length() == 0 ? null : a.optJSONObject(0);
+        String u = x == null ? "" : x.optString("url");
+        return u.startsWith("https://") ? u : "";
     }
 
     /** A failure: what was found before stays; asked again in an hour (not on every refresh). */

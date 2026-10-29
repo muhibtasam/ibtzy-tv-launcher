@@ -68,7 +68,7 @@ final class Discover {
         String hero = "", logo = "";
         // Games V1: SteamGridDB's square art (the top section; "": its wide art) and English Wikipedia's views of the
         // game's article in the last 30 days (how anticipated it is; 0: none).
-        String square = "", icon = "";   // (icon: SteamGridDB's, a PNG with transparency: the radar's pins)
+        String square = "", icon = "", keyArt = "";   // (keyArt: Steam's official 3840 px key art, no logo)   // (icon: SteamGridDB's, a PNG with transparency: the radar's pins)
         int views;   // featured games: SteamGridDB's top hero (key art) and logo (transparent PNG)
         String tier = "";       // Critics' picks: OpenCritic's tier ("Mighty", "Strong"…); score is its Top Critic Average
         // Games' scores, each from its own source (shown with it; none: "Not rated"):
@@ -730,7 +730,8 @@ final class Discover {
         }
         // RGB_565: no transparency needed (square corners), half the memory of ARGB (each title has a tall and a wide
         // card now); the shading is dithered so it doesn't band.
-        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565);
+        // Big ones (Games V1's top art, 880 px and more): full colour, no banding; RGB_565 only for the many small cards.
+        Bitmap out = Bitmap.createBitmap(w, h, (long) w * h > 400_000L ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565);
         Canvas c = new Canvas(out);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         BitmapShader shader = new BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
