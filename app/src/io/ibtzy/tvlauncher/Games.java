@@ -36,7 +36,7 @@ final class Games {
     // makes these rows from Upcoming).
     static final String COUNTDOWN = "g-countdown", RADAR = "g-radar";
     private static final long TTL = 6 * 3600_000L, RETRY = 15 * 60_000L;
-    private static final int VERSION = 11, PER_ROW = 14;   // 7: Recently released, Upcoming, Popular; ratings
+    private static final int VERSION = 12, PER_ROW = 14;   // 12: RAWG's own art kept apart ("rawg")   // 7: Recently released, Upcoming, Popular; ratings
     private static final long CRITICS_TTL = 24 * 3600_000L;   // OpenCritic's lists: once a day
     private static final String SGDB = "https://www.steamgriddb.com/api/v2", OC = "https://opencritic-api.p.rapidapi.com",
             OC_HOST = "opencritic-api.p.rapidapi.com";
@@ -386,7 +386,7 @@ final class Games {
             List<Discover.Title> psGames = new ArrayList<>();
             for (Discover.Title t : v1Games(rows)) if (onPlayStation(t)) psGames.add(t);
             // Games V1's art (SteamGridDB) and anticipation (Wikipedia), each game once (kept; looked at again later).
-            if (!Config.STEAMGRIDDB_KEY.trim().isEmpty()) {
+            if (!Config.STEAMGRIDDB_KEY.trim().isEmpty() || igdbOn()) {
                 List<Discover.Title> need = new ArrayList<>();
                 for (Discover.Title t : v1Games(rows)) if (artDue(t.id, now)) need.add(t);
                 for (Discover.Title t : need) jobs.add(pool.submit(() -> {   // each shows as soon as it's in
@@ -645,7 +645,7 @@ final class Games {
         return e == null || e.optInt("v") < ART_VERSION || now - e.optLong("at") > ART_TTL || now < e.optLong("at");
     }
 
-    private static final int ART_VERSION = 4;   // 2: the square textless first; 3: icons; 4: Steam's key art, full sizes
+    private static final int ART_VERSION = 7;   // 2: square textless; 3: icons; 4: Steam's key art; 6: IGDB first
 
     private boolean viewsDue(int id, long now) {
         JSONObject e = viewsById.get(id);
@@ -653,7 +653,7 @@ final class Games {
     }
 
     private boolean v1ArtMissing(long now) {
-        if (Config.STEAMGRIDDB_KEY.trim().isEmpty()) return false;
+        if (Config.STEAMGRIDDB_KEY.trim().isEmpty() && !igdbOn()) return false;
         for (Discover.Title t : v1Games(rows)) if (artDue(t.id, now)) return true;
         return false;
     }
@@ -670,10 +670,19 @@ final class Games {
                 JSONObject a = artById.get(t.id);
                 if (a != null) {
                     if (!a.optString("g").isEmpty()) t.poster = a.optString("g");
-                    if (!a.optString("h").isEmpty()) t.backdrop = a.optString("h");
+                    else if (!a.optString("c").isEmpty()) t.poster = a.optString("c");   // IGDB's cover
+                    // The wide card: RAWG's own 16:9 key art (the game's official art, whole); SteamGridDB's very wide
+                    // hero only where Steam has no key art.
+                    if (!t.rawg.isEmpty()) t.backdrop = t.rawg;
+                    t.trailer = a.optString("y");
+                    t.thumb = a.optString("t");
+                    t.hypes = a.optInt("hy");
+                    // IGDB first: the trailer's picture (16:9, whole, as on YouTube), else its official artwork.
+                    if (!t.thumb.isEmpty()) t.backdrop = t.thumb;
+                    else if (!a.optString("k").isEmpty() && a.optString("k").startsWith("https://images.igdb.com/")) t.backdrop = a.optString("k");
                     t.square = a.optString("s");
                     t.icon = a.optString("i");
-                    t.keyArt = a.optString("k");
+                    t.keyArt = !a.optString("k").isEmpty() ? a.optString("k") : a.optString("h");
                 }
                 JSONObject v = viewsById.get(t.id);
                 if (v != null) t.views = v.optInt("v");
@@ -686,9 +695,10 @@ final class Games {
         String key = Config.STEAMGRIDDB_KEY.trim();
         long now = System.currentTimeMillis();
         try {
-            int game = sgdbGame(t.title, key);
-            String g = "", h = "", sq = "", ic = "", key4k = steamHero(t.title);
-            if (game > 0) {
+            int game = key.isEmpty() ? 0 : sgdbGame(t.title, key);
+            JSONObject ig = igdb(t);   // IGDB first: the official artwork, trailer and anticipation
+            String g = "", h = "", sq = "", ic = "", key4k = ig.optString("a").isEmpty() ? steamHero(t.title) : ig.optString("a");
+            if (game > 0 && !key.isEmpty()) {
                 String opts = "types=static&nsfw=false&humor=false";
                 g = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=600x900&styles=no_logo&" + opts, key), false);
                 if (g.isEmpty()) g = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=600x900&" + opts, key), false);
@@ -697,7 +707,8 @@ final class Games {
                 sq = sgdbFull(sgdb("/grids/game/" + game + "?dimensions=1024x1024,512x512&styles=no_logo&" + opts, key));
                 ic = sgdbPick(sgdb("/icons/game/" + game + "?" + opts, key), false);   // its icon (a PNG): the radar's pins
             }
-            artById.put(t.id, new JSONObject().put("g", g).put("h", h).put("s", sq).put("i", ic).put("k", key4k).put("at", now).put("v", ART_VERSION));
+            artById.put(t.id, new JSONObject().put("g", g).put("h", h).put("s", sq).put("i", ic).put("k", key4k).put("y", ig.optString("y")).put("t", ig.optString("t")).put("c", ig.optString("c"))
+                    .put("hy", ig.optInt("hy")).put("at", now).put("v", ART_VERSION));
             Startup.games("art " + t.title + ": " + (game <= 0 ? "not on SteamGridDB" : (g.isEmpty() ? "" : "portrait ") + (h.isEmpty() ? "" : "wide ") + (sq.isEmpty() ? "" : "square")));
         } catch (Exception e) {
             AppLog.w("games art " + t.title + ": " + e.getMessage());
@@ -739,6 +750,140 @@ final class Games {
         JSONObject x = a == null || a.length() == 0 ? null : a.optJSONObject(0);
         String u = x == null ? "" : x.optString("url");
         return u.startsWith("https://") ? u : "";
+    }
+
+    // MARK: - IGDB (Twitch's games database: twitch_client_id / twitch_client_secret): first for art, trailers, anticipation
+
+    private static final Object IGDB_TURN = new Object();
+    private static long igdbLastAt, igdbTokenUntil;
+    private static String igdbToken = "";
+
+    private static boolean igdbOn() {
+        return !Config.TWITCH_CLIENT_ID.trim().isEmpty() && !Config.TWITCH_CLIENT_SECRET.trim().isEmpty();
+    }
+
+    /** IGDB's API, one request at a time, 4 a second at most (its limit), with an app token (asked for again before it ends). */
+    private static String igdbPost(String endpoint, String body) throws Exception {
+        synchronized (IGDB_TURN) {
+            long now = System.currentTimeMillis();
+            if (igdbToken.isEmpty() || now > igdbTokenUntil) {
+                HttpURLConnection c = (HttpURLConnection) new URL("https://id.twitch.tv/oauth2/token?grant_type=client_credentials&client_id="
+                        + URLEncoder.encode(Config.TWITCH_CLIENT_ID.trim(), "UTF-8") + "&client_secret="
+                        + URLEncoder.encode(Config.TWITCH_CLIENT_SECRET.trim(), "UTF-8")).openConnection();
+                c.setRequestMethod("POST");
+                c.setConnectTimeout(5000);
+                c.setReadTimeout(10000);
+                try {
+                    if (c.getResponseCode() != 200) throw new IOException("Twitch token: HTTP " + c.getResponseCode());
+                    JSONObject o = new JSONObject(read(c.getInputStream()));
+                    igdbToken = o.optString("access_token", "");
+                    igdbTokenUntil = now + Math.max(60, o.optLong("expires_in", 3600) - 600) * 1000L;
+                } finally {
+                    c.disconnect();
+                }
+                if (igdbToken.isEmpty()) throw new IOException("Twitch gave no token");
+            }
+            long wait = igdbLastAt + 260 - android.os.SystemClock.uptimeMillis();
+            if (wait > 0) Thread.sleep(wait);
+            HttpURLConnection c = (HttpURLConnection) new URL("https://api.igdb.com/v4/" + endpoint).openConnection();
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setConnectTimeout(5000);
+            c.setReadTimeout(10000);
+            c.setRequestProperty("Client-ID", Config.TWITCH_CLIENT_ID.trim());
+            c.setRequestProperty("Authorization", "Bearer " + igdbToken);
+            c.setRequestProperty("Accept", "application/json");
+            try {
+                c.getOutputStream().write(body.getBytes("UTF-8"));
+                int code = c.getResponseCode();
+                if (code == 401) igdbToken = "";   // asked for again next time
+                if (code != 200) throw new IOException("IGDB: HTTP " + code);
+                return read(c.getInputStream());
+            } finally {
+                c.disconnect();
+                igdbLastAt = android.os.SystemClock.uptimeMillis();
+            }
+        }
+    }
+
+    /**
+     * One game on IGDB (the same game: its exact name and year): {"a": a wide official artwork (1080p), "y": its
+     * trailer's YouTube id, "t": that trailer's picture (1280 × 720, when YouTube has it), "c": its cover, "hy": hypes}.
+     * Its summary becomes the game's description. Empty when IGDB is off, has no such game or fails.
+     */
+    private JSONObject igdb(Discover.Title t) {
+        JSONObject out = new JSONObject();
+        if (!igdbOn()) return out;
+        try {
+            String name = t.title.replace("\\", " ").replace("\"", " ");
+            JSONArray found = new JSONArray(igdbPost("games", "search \"" + name + "\"; fields name,first_release_date,hypes,summary,"
+                    + "artworks.image_id,artworks.width,artworks.height,cover.image_id,videos.video_id,videos.name; limit 10;"));
+            String[] names = new String[found.length()];
+            int[] years = new int[found.length()];
+            java.util.Calendar cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"));
+            for (int i = 0; i < names.length; i++) {
+                JSONObject g = found.optJSONObject(i);
+                names[i] = g == null ? "" : g.optString("name");
+                long at = g == null ? 0 : g.optLong("first_release_date");
+                if (at > 0) {
+                    cal.setTimeInMillis(at * 1000);
+                    years[i] = cal.get(java.util.Calendar.YEAR);
+                }
+            }
+            int year = t.date.length() >= 4 ? Integer.parseInt(t.date.substring(0, 4)) : 0;
+            int pick = GamesV1Logic.igdbGame(names, years, t.title, year);
+            if (pick < 0) {
+                Startup.games("igdb " + t.title + ": not found");
+                return out;
+            }
+            JSONObject g = found.getJSONObject(pick);
+            out.put("hy", g.optInt("hypes"));
+            JSONArray arts = g.optJSONArray("artworks");
+            int n = arts == null ? 0 : arts.length();
+            int[] w = new int[n], h = new int[n];
+            for (int i = 0; i < n; i++) {
+                w[i] = arts.optJSONObject(i).optInt("width");
+                h[i] = arts.optJSONObject(i).optInt("height");
+            }
+            int art = GamesV1Logic.igdbArtwork(w, h);
+            String imageId = art < 0 ? "" : arts.optJSONObject(art).optString("image_id");
+            if (imageId.matches("[A-Za-z0-9_]+")) out.put("a", "https://images.igdb.com/igdb/image/upload/t_1080p/" + imageId + ".jpg");
+            JSONObject cover = g.optJSONObject("cover");
+            String coverId = cover == null ? "" : cover.optString("image_id");
+            if (coverId.matches("[A-Za-z0-9_]+")) out.put("c", "https://images.igdb.com/igdb/image/upload/t_cover_big_2x/" + coverId + ".jpg");
+            JSONArray vids = g.optJSONArray("videos");
+            String[] vnames = new String[vids == null ? 0 : vids.length()];
+            for (int i = 0; i < vnames.length; i++) vnames[i] = vids.optJSONObject(i).optString("name");
+            int v = GamesV1Logic.igdbTrailer(vnames);
+            String vid = v < 0 ? "" : vids.optJSONObject(v).optString("video_id");
+            if (vid.matches("[A-Za-z0-9_-]{11}")) {
+                out.put("y", vid);
+                String thumb = "https://i.ytimg.com/vi/" + vid + "/maxresdefault.jpg";
+                if (headOk(thumb)) out.put("t", thumb);   // (an old video may have no 1280 px picture)
+            }
+            String summary = GamesLogic.summary(g.optString("summary", ""), ABOUT_MAX);
+            if (!summary.isEmpty()) about.put(t.id, summary);   // IGDB's description first
+            Startup.games("igdb " + t.title + ": " + (out.has("t") ? "trailer " : "") + (out.has("a") ? "art " : "") + "hypes " + out.optInt("hy"));
+        } catch (Exception e) {
+            AppLog.w("games igdb " + t.title + ": " + e.getMessage());
+        }
+        return out;
+    }
+
+    private static boolean headOk(String url) {
+        try {
+            HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+            c.setRequestMethod("HEAD");
+            c.setConnectTimeout(5000);
+            c.setReadTimeout(8000);
+            try {
+                return c.getResponseCode() == 200;
+            } finally {
+                c.disconnect();
+            }
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** A failure: what was found before stays; asked again in an hour (not on every refresh). */
@@ -1111,6 +1256,7 @@ final class Games {
             t.title = g.optString("name");
             t.backdrop = image;
             t.poster = image;   // RAWG has landscape art only: the tall cards show its centre
+            t.rawg = image;     // kept apart: Games V1's wide art (the game's 16:9 key art, often 4K)
             t.date = g.optString("released", "");
             if ("null".equals(t.date)) t.date = "";
             t.platforms = platforms(g.optJSONArray("platforms"));
@@ -1200,7 +1346,7 @@ final class Games {
                 for (Discover.Title t : r.items) {
                     items.put(new JSONObject().put("id", t.id).put("title", t.title).put("image", t.backdrop)
                             .put("date", t.date).put("platforms", t.platforms).put("genres", t.genres)
-                            .put("score", t.score).put("added", t.added).put("logo", t.logo).put("tier", t.tier)
+                            .put("score", t.score).put("added", t.added).put("logo", t.logo).put("rawg", t.rawg).put("tier", t.tier)
                             .put("meta", t.meta).put("rating", t.rating).put("ratings", t.ratings).put("oc", t.ocId)
                             .put("critics", t.critics).put("rank", t.rank).put("country", t.country).put("countryName", t.countryName)
                             .put("countryRank", t.countryRank).put("countryTied", t.countryTied).put("india", t.indiaRank).put("psLabel", t.psLabel).put("psNo1", t.psNo1).put("psTop10", t.psTop10).put("rankSaved", t.rankSaved));
@@ -1244,6 +1390,7 @@ final class Games {
                 t.score = x.optInt("score");
                 t.added = x.optInt("added");
                 t.logo = x.optString("logo");
+                t.rawg = x.optString("rawg");
                 t.tier = x.optString("tier");
                 t.meta = x.optInt("meta");
                 t.rating = (float) x.optDouble("rating", 0);

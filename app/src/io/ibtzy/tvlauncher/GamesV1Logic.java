@@ -107,6 +107,47 @@ public final class GamesV1Logic {
         return fallback;
     }
 
+    /** Which IGDB result is the game: its exact name (punctuation aside), a release year within 3 of RAWG's; -1: none. */
+    public static int igdbGame(String[] names, int[] years, String game, int year) {
+        String want = key(game);
+        if (names == null || want.isEmpty()) return -1;
+        int best = -1;
+        for (int i = 0; i < names.length; i++) {
+            if (!key(names[i]).equals(want)) continue;
+            int y = years != null && i < years.length ? years[i] : 0;
+            if (y > 0 && year > 0 && Math.abs(y - year) > 3) continue;   // another game of the same name (early access: ≤ 3 years)
+            if (y == year && year > 0) return i;
+            if (best < 0) best = i;
+        }
+        return best;
+    }
+
+    /** The trailer to show: a launch trailer, else the newest named a trailer, else the first video; -1: none. */
+    public static int igdbTrailer(String[] names) {
+        if (names == null || names.length == 0) return -1;
+        int last = -1;
+        for (int i = 0; i < names.length; i++) {
+            String n = names[i] == null ? "" : names[i].toLowerCase(Locale.ROOT);
+            if (n.contains("launch") && n.contains("trailer")) return i;
+            if (n.contains("trailer")) last = i;
+        }
+        return last >= 0 ? last : 0;
+    }
+
+    /** A wide artwork to show whole (4:3 or wider, 1280 px across at least); the first such, -1: none. */
+    public static int igdbArtwork(int[] w, int[] h) {
+        if (w == null || h == null) return -1;
+        for (int i = 0; i < w.length && i < h.length; i++) if (w[i] >= 1280 && h[i] > 0 && w[i] >= 1.3f * h[i]) return i;
+        return -1;
+    }
+
+    /** The top art's size: 16:9 (a trailer's picture whole, never cut), maxW wide at most, no taller than the room. */
+    public static float[] artSize(float maxW, float roomH) {
+        if (roomH <= 0 || maxW <= 0) return new float[] {0, 0};
+        float h = Math.min(roomH, maxW * 9f / 16f);
+        return new float[] {Math.round(h * 16f / 9f), Math.round(h)};
+    }
+
     private static String key(String s) {
         return s == null ? "" : s.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
     }

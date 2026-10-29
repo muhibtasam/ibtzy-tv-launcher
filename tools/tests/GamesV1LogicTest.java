@@ -70,6 +70,30 @@ public class GamesV1LogicTest {
         check("article null", GamesV1Logic.wikiArticle(null, "Fable", 2026), "");
         check("article blank game", GamesV1Logic.wikiArticle(new String[] {"X"}, " ", 2026), "");
 
+        // IGDB: the same game (its exact name; the release year when there are several), its newest trailer, a wide artwork.
+        check("igdb game", GamesV1Logic.igdbGame(new String[] {"Grand Theft Auto VI: Ultimate Edition", "Grand Theft Auto VI"}, new int[] {2026, 2026}, "Grand Theft Auto VI", 2026), 1);
+        check("igdb game by year", GamesV1Logic.igdbGame(new String[] {"Fable", "Fable"}, new int[] {2004, 2027}, "Fable", 2027), 1);
+        check("igdb game no year", GamesV1Logic.igdbGame(new String[] {"Reka"}, new int[] {0}, "REKA", 2026), 0);
+        check("igdb game early access", GamesV1Logic.igdbGame(new String[] {"Path of Exile 2"}, new int[] {2024}, "Path of Exile 2", 2026), 0);
+        check("igdb game none", GamesV1Logic.igdbGame(new String[] {"Fable II"}, new int[] {2008}, "Fable", 2027), -1);
+        check("igdb game null", GamesV1Logic.igdbGame(null, null, "Fable", 2027), -1);
+        check("igdb trailer: the newest", GamesV1Logic.igdbTrailer(new String[] {"Announcement Trailer", "Release Date Trailer", "Gameplay Video"}), 1);
+        check("igdb trailer: launch first", GamesV1Logic.igdbTrailer(new String[] {"Launch Trailer", "Trailer 2", "Gameplay"}), 0);
+        check("igdb trailer: any video", GamesV1Logic.igdbTrailer(new String[] {"Gameplay Video"}), 0);
+        check("igdb trailer none", GamesV1Logic.igdbTrailer(new String[0]), -1);
+        check("igdb trailer null", GamesV1Logic.igdbTrailer(null), -1);
+        check("igdb art: wide and big", GamesV1Logic.igdbArtwork(new int[] {1024, 3840, 1280}, new int[] {1024, 2160, 720}), 1);
+        check("igdb art: 4:3 too", GamesV1Logic.igdbArtwork(new int[] {2880}, new int[] {2160}), 0);
+        check("igdb art: none wide", GamesV1Logic.igdbArtwork(new int[] {1024, 600}, new int[] {1024, 900}), -1);
+        check("igdb art: too small", GamesV1Logic.igdbArtwork(new int[] {640}, new int[] {360}), -1);
+        check("igdb art: bad sizes", GamesV1Logic.igdbArtwork(new int[] {0, -1}, new int[] {0, 5}), -1);
+        check("igdb art null", GamesV1Logic.igdbArtwork(null, null), -1);
+
+        // The top art: 16:9 (a trailer's picture whole), 880 wide at most, as tall as the room allows.
+        check("art fits", GamesV1Logic.artSize(880, 549), new float[] {880, 495});
+        check("art shorter room", GamesV1Logic.artSize(880, 451), new float[] {802, 451});
+        check("art no room", GamesV1Logic.artSize(880, -5), new float[] {0, 0});
+
         // How long ago / until (calendar days, local).
         check("out today", GamesV1Logic.ago(oct29, today, TZ), "Out today");
         check("yesterday", GamesV1Logic.ago(oct29 - DAY, today, TZ), "Yesterday");

@@ -3611,6 +3611,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 added[i] = upcoming.items.get(i).added;
                 views[i] = upcoming.items.get(i).views;
             }
+            int[] hypes = new int[n];   // IGDB's hypes first (its own anticipation), Wikipedia's views else
+            boolean anyHype = false;
+            for (int i = 0; i < n; i++) anyHype |= (hypes[i] = upcoming.items.get(i).hypes) > 0;
+            if (anyHype) views = hypes;
             int top = GamesV1Logic.anticipated(rel, added, views, now);   // Wikipedia's views first, RAWG's added else
             if (top >= 0) {
                 Discover.Title t = upcoming.items.get(top);
@@ -4318,7 +4322,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Games V1's top section: OK finds the game's trailer on YouTube (its search, the first result focused). */
     private void playTrailer(Discover.Title t) {
         String q = android.net.Uri.encode(t.title + " official trailer");
-        android.net.Uri search = android.net.Uri.parse("https://www.youtube.com/results?search_query=" + q);
+        android.net.Uri search = android.net.Uri.parse(!t.trailer.isEmpty() ? "https://www.youtube.com/watch?v=" + t.trailer   // plays it (IGDB's)
+                : "https://www.youtube.com/results?search_query=" + q);
         Intent in = new Intent(Intent.ACTION_VIEW, search).setPackage("com.google.android.youtube.tv").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             getContext().startActivity(in);
@@ -4890,6 +4895,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private float gvPaintK;
     // The countdown's digits: made when the minute changes (not on every frame), with their boxes' widths.
     private long cdMinute = -1, cdRel = -2;
+    private float gvArtRoom = -1;
+    private float[] gvArtSize = {0, 0};
     private final String[] cdDigits = {"", "", ""};
     private final float[] cdBoxW = new float[3];
     private static final String[] CD_UNITS = {"DAYS", "HOURS", "MINUTES"};
@@ -4965,14 +4972,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // the description under the countdown; rounded 28, its shadow under it; the ivory ring when focused. Cut like
         // CSS cover, a little above the middle (faces).
         float artW = GV_ART, ax = CONTENT_R - artW;
-        float artTop = Math.max(top - GV_ART_ABOVE, 200 + 16), artBottom = top + CD_H + CD_GAP + GV_DESC_H;
-        float fullH = GV_ART_ABOVE + CD_H + CD_GAP + GV_DESC_H;   // its picture is made once at its tallest
-        gvRect.set(ax * k, artTop * k, CONTENT_R * k, artBottom * k);
+        // 16:9 (the key art whole, not zoomed in): as big as the room from the sub tabs' line to the description's end.
+        // From the sub tabs' line while they show; from the countdown's top once they hide (it scrolls with the page).
+        float artTop = top - GV_ART_ABOVE * Ui.clamp(feedSwitchVis.value);
+        float artRoom = top + CD_H + CD_GAP + GV_DESC_H - artTop;
+        if (artRoom != gvArtRoom) {   // measured again only while the page moves
+            gvArtRoom = artRoom;
+            gvArtSize = GamesV1Logic.artSize(GV_ART, artRoom);
+        }
+        float fullH = GV_ART * 9f / 16f;   // its picture is made once at its biggest
+        gvRect.set((CONTENT_R - gvArtSize[0]) * k, artTop * k, CONTENT_R * k, (artTop + gvArtSize[1]) * k);
         tmp.set(gvRect.left, gvRect.top + 16 * k, gvRect.right, gvRect.bottom + 16 * k);
         shadowDeep.setColor(0xB3000000);
         shadows.draw(c, tmp, 28 * k, DEEP_BLUR * k, shadowDeep);
-        // Steam's official key art first (3840 px, no logo), then the textless square art (full size), the wide art.
-        String art = !t.keyArt.isEmpty() ? t.keyArt : !t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster;
+        // The game's 16:9 key art first (RAWG's or OpenCritic's, whole), then Steam's (cut), the textless square art.
+        String art = !t.backdrop.isEmpty() ? t.backdrop : !t.keyArt.isEmpty() ? t.keyArt : !t.square.isEmpty() ? t.square : t.poster;
         Bitmap b = Discover.get(getContext()).card(art, true, Math.round(artW * k), Math.round(fullH * k), 0);
         fill.setShader(null);
         if (b != null) drawCoveredRound(c, b, gvRect, 28 * k, 1);   // rounded by the shader (no clip)

@@ -56,6 +56,8 @@ final class Config {
     static final String RAWG_KEY = "$(prop rawg_key '')";
     static final String STEAMGRIDDB_KEY = "$(prop steamgriddb_key '')";
     static final String OPENCRITIC_KEY = "$(prop opencritic_key '')";
+    static final String TWITCH_CLIENT_ID = "$(prop twitch_client_id '')";
+    static final String TWITCH_CLIENT_SECRET = "$(prop twitch_client_secret '')";
     static final String TMDB_REGION = "$(prop tmdb_region US)";
     static final String LATITUDE = "$LAT";
     static final String LONGITUDE = "$LON";

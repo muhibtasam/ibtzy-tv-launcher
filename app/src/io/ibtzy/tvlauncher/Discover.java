@@ -68,7 +68,8 @@ final class Discover {
         String hero = "", logo = "";
         // Games V1: SteamGridDB's square art (the top section; "": its wide art) and English Wikipedia's views of the
         // game's article in the last 30 days (how anticipated it is; 0: none).
-        String square = "", icon = "", keyArt = "";   // (keyArt: Steam's official 3840 px key art, no logo)   // (icon: SteamGridDB's, a PNG with transparency: the radar's pins)
+        String square = "", icon = "", keyArt = "", rawg = "", trailer = "", thumb = "";   // (IGDB: its trailer's YouTube id and picture)
+        int hypes;   // IGDB: how many follow it before its release (its anticipation)   // (rawg: RAWG's own art, never replaced)   // (keyArt: Steam's official 3840 px key art, no logo)   // (icon: SteamGridDB's, a PNG with transparency: the radar's pins)
         int views;   // featured games: SteamGridDB's top hero (key art) and logo (transparent PNG)
         String tier = "";       // Critics' picks: OpenCritic's tier ("Mighty", "Strong"…); score is its Top Critic Average
         // Games' scores, each from its own source (shown with it; none: "Not rated"):
