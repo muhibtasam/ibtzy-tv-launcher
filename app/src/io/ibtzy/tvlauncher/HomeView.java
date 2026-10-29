@@ -5725,17 +5725,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean soon = pr > 0.001f || Math.abs(i - feedColOf(row.key)) <= 2;
         Bitmap wide = soon ? d.card(t.backdrop.isEmpty() ? t.poster : t.backdrop, !t.backdrop.isEmpty(),
                 Math.round(feedProminentW(row.key) * k), Math.round(H), r0) : null;
-        clip.reset();
-        clip.addRoundRect(tmp, r0, r0, Path.Direction.CW);
-        c.save();
-        c.clipPath(clip);
+        // Each art as the shader of a rounded rectangle (no clip mask: on this GPU a clip path cost a mask on every frame
+        // of a card widening).
         if (tall == null && wide == null) {
-            c.drawColor(0x1FFFFFFF);
+            fill.setShader(null);
+            fill.setColor(0x1FFFFFFF);
+            c.drawRoundRect(tmp, r0, r0, fill);
         } else {
-            if (tall != null && pr < 0.999f) drawCovered(c, tall, tmp, wide == null ? 1 : 1 - pr);
-            if (wide != null && pr > 0.001f) drawCovered(c, wide, tmp, tall == null ? 1 : pr);
+            if (tall != null && pr < 0.999f) drawCoveredRound(c, tall, tmp, r0, wide == null ? 1 : 1 - pr);
+            if (wide != null && pr > 0.001f) drawCoveredRound(c, wide, tmp, r0, tall == null ? 1 : pr);
         }
-        c.restore();
         float pad = (W > 400 * k ? 30 : 18) * k, left = -W / 2 + pad, bottom = H / 2 - pad;
         boolean trending = Discover.TRENDING.equals(row.key), movie = movieRow(row.key);
         if (movie) drawMovieCardText(c, t, i, trending, W, H, pr);
@@ -5954,6 +5953,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         mvDesc.setAlpha(Math.round(204 * a));
         for (int n = 0; n < lines.length; n++) c.drawText(lines[n], x * k, (cardsBottom + MV_DESC_GAP + 19 + n * MV_DESC_LINE) * k, mvDesc);
         mvDesc.setAlpha(255);
+    }
+
+    private final Paint coverPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Matrix coverM = new Matrix();
+
+    /** `b` into the rounded `dst` like CSS object-fit: cover (centred, never stretched), at `alpha`, without a clip. */
+    private void drawCoveredRound(Canvas c, Bitmap b, RectF dst, float radius, float alpha) {
+        BitmapShader shader = imageShaders.get(b);
+        if (shader == null) {
+            shader = new BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            imageShaders.put(b, shader);
+        }
+        float bw = b.getWidth(), bh = b.getHeight(), sc = Math.max(dst.width() / bw, dst.height() / bh);
+        coverM.setScale(sc, sc);
+        coverM.postTranslate(dst.centerX() - bw * sc / 2, dst.centerY() - bh * sc / 2);
+        shader.setLocalMatrix(coverM);
+        coverPaint.setShader(shader);
+        coverPaint.setAlpha(Math.round(255 * Ui.clamp(alpha)));
+        c.drawRoundRect(dst, radius, radius, coverPaint);
+        coverPaint.setShader(null);
     }
 
     /** `b` into `dst` like CSS object-fit: cover (centred; cut, never stretched), at `alpha`. */
