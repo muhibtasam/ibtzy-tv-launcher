@@ -65,7 +65,11 @@ final class Discover {
         float vote;
         int score, added;
         String shots = "";      // games: up to 5 screenshot addresses, one per line (the hero's strip)
-        String hero = "", logo = "";   // featured games: SteamGridDB's top hero (key art) and logo (transparent PNG)
+        String hero = "", logo = "";
+        // Games V1: SteamGridDB's square art (the top section; "": its wide art) and English Wikipedia's views of the
+        // game's article in the last 30 days (how anticipated it is; 0: none).
+        String square = "", icon = "";   // (icon: SteamGridDB's, a PNG with transparency: the radar's pins)
+        int views;   // featured games: SteamGridDB's top hero (key art) and logo (transparent PNG)
         String tier = "";       // Critics' picks: OpenCritic's tier ("Mighty", "Strong"…); score is its Top Critic Average
         // Games' scores, each from its own source (shown with it; none: "Not rated"):
         int meta;               // Metacritic, as RAWG lists it
@@ -517,26 +521,55 @@ final class Discover {
 
     // MARK: - Card images: made once at the card's exact size (rounded, the bottom shaded for the title), in the background
 
-    private final Map<String, Bitmap> cards = new LinkedHashMap<String, Bitmap>(64, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> e) { return size() > 130; }   // tall + wide each
+    private final Map<CardKey, Bitmap> cards = new LinkedHashMap<CardKey, Bitmap>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<CardKey, Bitmap> e) { return size() > 130; }   // tall + wide each
     };
-    private final java.util.Set<String> pending = new java.util.HashSet<>();
+    private final java.util.Set<CardKey> pending = new java.util.HashSet<>();
+
+    /** A card's key (its picture and size). Looked up with one reused probe: no text made on every frame of drawing. */
+    private static final class CardKey {
+        String path;
+        int w, h;
+
+        CardKey(String path, int w, int h) {
+            this.path = path;
+            this.w = w;
+            this.h = h;
+        }
+
+        @Override public int hashCode() {
+            return (path.hashCode() * 31 + w) * 31 + h;
+        }
+
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof CardKey)) return false;
+            CardKey x = (CardKey) o;
+            return x.w == w && x.h == h && x.path.equals(path);
+        }
+    }
+
+    private final CardKey probe = new CardKey("", 0, 0);   // guarded by `cards`
 
     /**
      * The card for `path` (a TMDB image path: backdrop for wide cards, poster for tall ones) at w × h px, or null while
      * it's being made (the caller draws a placeholder; listeners hear when it's ready).
      */
-    private final Map<String, Long> failedCards = new java.util.HashMap<>();   // guarded by `cards`
+    private final Map<CardKey, Long> failedCards = new java.util.HashMap<>();   // guarded by `cards`
 
     Bitmap card(String path, boolean wide, int w, int h, float radius) {
         if (path == null || path.isEmpty() || w <= 0 || h <= 0) return null;
-        String key = path + "@" + w + "x" + h;
-        synchronized (cards) {
-            Bitmap b = cards.get(key);
+        final CardKey key;
+        synchronized (cards) {   // held only for these lookups (the image is made outside it)
+            probe.path = path;
+            probe.w = w;
+            probe.h = h;
+            Bitmap b = cards.get(probe);
             if (b != null) return b;
-            Long failedAt = failedCards.get(key);   // a picture that failed: not asked again for 5 minutes (it was every frame)
+            Long failedAt = failedCards.get(probe);   // a picture that failed: not asked again for 5 minutes (it was every frame)
             if (failedAt != null && System.currentTimeMillis() - failedAt < 300_000L) return null;
-            if (!pending.add(key)) return null;
+            if (pending.contains(probe)) return null;
+            key = new CardKey(path, w, h);
+            pending.add(key);
         }
         images.execute(() -> {
             Bitmap out = null;
@@ -648,7 +681,7 @@ final class Discover {
      */
     Bitmap logo(String url) {
         if (url == null || url.isEmpty()) return null;
-        String key = "logo:" + url;
+        CardKey key = new CardKey("logo:" + url, -1, -1);
         synchronized (logos) {
             Bitmap b = logos.get(url);
             if (b != null || failedLogos.contains(url)) return b;
@@ -673,7 +706,10 @@ final class Discover {
                 pending.remove(key);
             }
             synchronized (logos) {
-                if (out != null) logos.put(url, out);
+                if (out != null) {
+                    out.setHasMipMap(true);   // drawn far smaller than it is (a 512 px icon in a 56 px pin)
+                    logos.put(url, out);
+                }
                 else failedLogos.add(url);   // not again (the typed name stays)
             }
             if (out != null) changed();

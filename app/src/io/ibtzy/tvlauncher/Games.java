@@ -111,10 +111,11 @@ final class Games {
                             }
                         }
                     }
+                    loadById(o.optJSONObject("sgdb"), artById);
+                    loadById(o.optJSONObject("wiki"), viewsById);
+                    applyV1(rows);
                     JSONArray oc = o.optJSONArray("oc");
                     if (oc != null) ocList = oc;
-                    JSONArray none = o.optJSONArray("noLogo");
-                    for (int i = 0; none != null && i < none.length(); i++) noLogo.add(none.optInt(i));
                     JSONObject ab = o.optJSONObject("about");   // descriptions: kept, never asked for again
                     for (java.util.Iterator<String> it = ab == null ? null : ab.keys(); it != null && it.hasNext(); ) {
                         String id = it.next();
@@ -219,7 +220,15 @@ final class Games {
         return have == null ? "" : have;
     }
 
+    private volatile int version;
+
+    /** Bumped whenever the games or what's known about them change (Games V1 makes its rows again then). */
+    int version() {
+        return version;
+    }
+
     private void changed() {
+        version++;
         Discover.get(context).notifyListeners();
     }
 
@@ -236,7 +245,8 @@ final class Games {
         if (fetching || !configured()) return;
         boolean stale = rows.isEmpty() || now - fetchedAt > TTL || now < fetchedAt;
         final boolean fetchRows = stale && !(failedAt != 0 && now - failedAt < RETRY && now >= failedAt);
-        boolean enrich = !rows.isEmpty() && (criticsDue(now) || logosMissing() || artMissing(now) || psMissing(now));
+        boolean enrich = !rows.isEmpty() && (criticsDue(now) || psMissing(now)
+                || v1ArtMissing(now) || viewsMissing(now));
         if (!fetchRows && !enrich) return;
         fetching = true;
         changed();
@@ -312,15 +322,6 @@ final class Games {
                     "&dates=" + Recs.day(-365) + "," + today + "&ordering=-added", 40));
             Discover.Row recent = take(recentF, "recent"), upcoming = take(upcomingF, "upcoming"), popular = take(popularF, "popular");
             List<Discover.Row> out = new ArrayList<>();
-            Discover.Row hero = new Discover.Row();
-            hero.key = HERO;
-            hero.name = Ui.tr("Featured");
-            // The bento's 6 (big first): the 3 most added recent games and the 3 most added upcoming ones, in turn.
-            for (int i = 0; i < 3; i++) {   // both lists are still most-added first here
-                if (recent != null && recent.items.size() > i) hero.items.add(copy(recent.items.get(i)));
-                if (upcoming != null && upcoming.items.size() > i) hero.items.add(copy(upcoming.items.get(i)));
-            }
-            if (!hero.items.isEmpty()) out.add(hero);
             if (recent != null && !recent.items.isEmpty()) {
                 java.util.Collections.sort(recent.items, (a, b) -> b.date.compareTo(a.date));   // newest first
                 out.add(recent);
@@ -364,7 +365,6 @@ final class Games {
 
     // MARK: - Stage 2: logos and critics' scores
 
-    private final Set<Integer> noLogo = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
     private volatile long criticsFailedAt;
     private volatile JSONArray ocList = new JSONArray();   // OpenCritic's lists: {id, name, score, tier, reviews}
 
@@ -374,60 +374,45 @@ final class Games {
         return now - criticsAt > CRITICS_TTL || now < criticsAt;
     }
 
-    /** Logos (SteamGridDB): for the bento's games, looked up once each (the result, or none, is kept). */
-    private static final boolean LOGOS = true;   // the bento's 6 only: drawn instead of their names
-
-    private boolean artMissing(long now) {
-        if (Config.OPENCRITIC_KEY.trim().isEmpty() || (criticsFailedAt != 0 && now - criticsFailedAt < 3600_000L)) return false;
-        for (Discover.Row r : rows) {
-            if (!HERO.equals(r.key)) continue;
-            for (Discover.Title t : r.items) {
-                if (!ocArtById.containsKey(t.id) && !t.backdrop.startsWith("https://img.opencritic.com/")) return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean logosMissing() {
-        if (!LOGOS || Config.STEAMGRIDDB_KEY.trim().isEmpty()) return false;
-        for (Discover.Row r : rows) {
-            if (!HERO.equals(r.key)) continue;
-            for (Discover.Title t : r.items) if (t.logo.isEmpty() && !noLogo.contains(t.id)) return true;
-        }
-        return false;
-    }
 
     private void enrich() {
         long now = System.currentTimeMillis();
         ExecutorService pool = Recs.lowPriority(4);
         try {
             List<Future<?>> jobs = new ArrayList<>();
-            if (LOGOS && !Config.STEAMGRIDDB_KEY.trim().isEmpty()) {
-                for (Discover.Row r : rows) {
-                    if (!HERO.equals(r.key)) continue;
-                    for (Discover.Title t : r.items) if (t.logo.isEmpty() && !noLogo.contains(t.id)) jobs.add(pool.submit(() -> logo(t)));
-                }
-            }
             Future<JSONArray> oc = criticsDue(now) ? pool.submit(this::criticsList) : null;
             // PlayStation games of the bento: PS Store entry, cover and best country (one queue for them all).
+            // Games V1: its games on PlayStation (India's chart for Trending, pre-orders).
             List<Discover.Title> psGames = new ArrayList<>();
-            for (Discover.Row r : rows) if (HERO.equals(r.key)) for (Discover.Title t : r.items) if (onPlayStation(t)) psGames.add(t);
-            if (!psGames.isEmpty()) jobs.add(pool.submit(() -> { for (Discover.Title t : psGames) psFor(t); }));
-            // The bento's games without OpenCritic art from its lists: looked up one by one (2 requests each), once —
-            // the result (art, or none) is kept in games.json, so each game costs that at most once.
-            if (!Config.OPENCRITIC_KEY.trim().isEmpty() && (criticsFailedAt == 0 || now - criticsFailedAt > 3600_000L)) {
-                for (Discover.Row r : rows) {
-                    if (!HERO.equals(r.key)) continue;
-                    for (Discover.Title t : r.items) {
-                        if (!ocArtById.containsKey(t.id) && !t.backdrop.startsWith("https://img.opencritic.com/")) {
-                            jobs.add(pool.submit(() -> ocArtFor(t)));
-                        }
+            for (Discover.Title t : v1Games(rows)) if (onPlayStation(t)) psGames.add(t);
+            // Games V1's art (SteamGridDB) and anticipation (Wikipedia), each game once (kept; looked at again later).
+            if (!Config.STEAMGRIDDB_KEY.trim().isEmpty()) {
+                List<Discover.Title> need = new ArrayList<>();
+                for (Discover.Title t : v1Games(rows)) if (artDue(t.id, now)) need.add(t);
+                for (Discover.Title t : need) jobs.add(pool.submit(() -> {   // each shows as soon as it's in
+                    sgdbArt(t);
+                    applyV1(rows);
+                    changed();
+                }));
+            }
+            List<Discover.Title> wiki = new ArrayList<>();
+            for (Discover.Row r : rows) if (UPCOMING.equals(r.key)) for (Discover.Title t : r.items) if (viewsDue(t.id, now)) wiki.add(t);
+            if (!wiki.isEmpty()) jobs.add(pool.submit(() -> {
+                for (Discover.Title t : wiki) {
+                    wikiViews(t);
+                    try {
+                        Thread.sleep(1100);   // Wikipedia's etiquette: one request at a time, unhurried (it answered 429 faster)
+                    } catch (InterruptedException e) {
+                        return;
                     }
                 }
-            }
+                applyV1(rows);
+                changed();
+            }));
+            if (!psGames.isEmpty()) jobs.add(pool.submit(() -> { for (Discover.Title t : psGames) psFor(t); }));
             for (Future<?> f : jobs) {
                 try {
-                    f.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                    f.get(180, java.util.concurrent.TimeUnit.SECONDS);   // (the PS Store's queue: ~1 s a request)
                 } catch (Exception ignored) {
                 }
             }
@@ -556,11 +541,6 @@ final class Games {
             for (Discover.Title t : r.items) {
                 JSONObject e = psById.get(t.id);
                 if (e == null) continue;
-                String cover = e.optString("cover", "");
-                if (!cover.isEmpty()) {
-                    t.backdrop = cover;
-                    t.poster = cover;
-                }
                 t.country = e.optString("country", "");
                 t.countryName = e.optString("countryName", "");
                 t.countryRank = e.optInt("rank");
@@ -585,9 +565,8 @@ final class Games {
     }
 
     private boolean psMissing(long now) {
-        for (Discover.Row r : rows) {
-            if (!HERO.equals(r.key)) continue;
-            for (Discover.Title t : r.items) {
+        {
+            for (Discover.Title t : v1Games(rows)) {
                 if (!onPlayStation(t)) continue;
                 JSONObject e = psById.get(t.id);
                 if (e == null || now - e.optLong("at") > PS_ART_TTL || (!e.optString("id").isEmpty() && !e.has("top10"))) return true;   // (read before India's rank was kept)
@@ -598,57 +577,6 @@ final class Games {
 
     /** RAWG id → OpenCritic art address ("" = OpenCritic has none / doesn't know it), from ocArtFor. */
     private final java.util.Map<Integer, String> ocArtById = new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** One game's OpenCritic art: by its id, else by its exact name (never a near name), then its page's images. */
-    private void ocArtFor(Discover.Title t) {
-        try {
-            int id = t.ocId;
-            if (id <= 0) {
-                JSONArray found = new JSONArray(oc("/game/search?criteria=" + URLEncoder.encode(t.title, "UTF-8")));
-                for (int i = 0; i < found.length() && id <= 0; i++) {
-                    JSONObject g = found.optJSONObject(i);
-                    if (g != null && norm(t.title).equals(norm(g.optString("name")))) id = g.optInt("id");
-                }
-            }
-            String img = id <= 0 ? "" : ocArt(new JSONObject(oc("/game/" + id)).optJSONObject("images"));
-            ocArtById.put(t.id, img);
-            Startup.games("art " + t.title + ": " + (img.isEmpty() ? "none on OpenCritic (RAWG's stays)" : "OpenCritic"));
-        } catch (Exception e) {
-            AppLog.w("games art " + t.title + ": " + e.getMessage());   // not kept: tried again next refresh
-        }
-    }
-
-    /** SteamGridDB (steamgriddb_key): the game by name (the exact name first), then its first transparent PNG logo. */
-    private void logo(Discover.Title t) {
-        String key = Config.STEAMGRIDDB_KEY.trim();
-        try {
-            String q = URLEncoder.encode(t.title, "UTF-8").replace("+", "%20");
-            JSONArray found = sgdb("/search/autocomplete/" + q, key).optJSONArray("data");
-            JSONObject game = null;
-            for (int i = 0; found != null && i < found.length(); i++) {
-                JSONObject g = found.optJSONObject(i);
-                if (g != null && norm(t.title).equals(norm(g.optString("name")))) {
-                    game = g;
-                    break;
-                }
-            }
-            if (game == null || game.optInt("id") <= 0) {   // only the same game's logo, never a near name's
-                noLogo.add(t.id);
-                return;
-            }
-            JSONArray logos = sgdb("/logos/game/" + game.optInt("id") + "?types=static&nsfw=false&humor=false", key).optJSONArray("data");
-            for (int i = 0; logos != null && i < logos.length(); i++) {
-                JSONObject l = logos.optJSONObject(i);
-                if (l != null && "image/png".equals(l.optString("mime"))) {
-                    t.logo = l.optString("url", "");
-                    return;
-                }
-            }
-            noLogo.add(t.id);
-        } catch (Exception e) {
-            AppLog.w("games logo " + t.title + ": " + e.getMessage());
-        }
-    }
 
     /** OpenCritic's recently released and popular games (two requests a day): id, name, Top Critic Average, tier. */
     private JSONArray criticsList() throws Exception {
@@ -693,10 +621,192 @@ final class Games {
         return "";
     }
 
+    // MARK: - Games V1: artwork (SteamGridDB) and anticipation (Wikipedia's page views)
+
+    private static final long ART_TTL = 14 * 24 * 3600_000L, VIEWS_TTL = 24 * 3600_000L, RETRY_AFTER = 3600_000L;
+    /** RAWG id → {"g": portrait art (600×900, textless first), "h": wide key art, "s": square art ("" none), "at"}. Kept. */
+    private final java.util.Map<Integer, JSONObject> artById = new java.util.concurrent.ConcurrentHashMap<>();
+    /** RAWG id → {"v": English Wikipedia views of its article in the last 30 days (0: none), "at"}. Kept. */
+    private final java.util.Map<Integer, JSONObject> viewsById = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Games V1's games: Just released, Trending and Upcoming, each once. */
+    private static List<Discover.Title> v1Games(List<Discover.Row> rs) {
+        List<Discover.Title> out = new ArrayList<>();
+        Set<Integer> seen = new HashSet<>();
+        for (Discover.Row r : rs) {
+            if (!RECENT.equals(r.key) && !POPULAR.equals(r.key) && !UPCOMING.equals(r.key)) continue;
+            for (Discover.Title t : r.items) if (seen.add(t.id)) out.add(t);
+        }
+        return out;
+    }
+
+    private boolean artDue(int id, long now) {
+        JSONObject e = artById.get(id);
+        return e == null || e.optInt("v") < ART_VERSION || now - e.optLong("at") > ART_TTL || now < e.optLong("at");
+    }
+
+    private static final int ART_VERSION = 3;   // 2: the square textless first, else the wide key art; 3: icons
+
+    private boolean viewsDue(int id, long now) {
+        JSONObject e = viewsById.get(id);
+        return e == null || now - e.optLong("at") > VIEWS_TTL || now < e.optLong("at");
+    }
+
+    private boolean v1ArtMissing(long now) {
+        if (Config.STEAMGRIDDB_KEY.trim().isEmpty()) return false;
+        for (Discover.Title t : v1Games(rows)) if (artDue(t.id, now)) return true;
+        return false;
+    }
+
+    private boolean viewsMissing(long now) {
+        for (Discover.Row r : rows) if (UPCOMING.equals(r.key)) for (Discover.Title t : r.items) if (viewsDue(t.id, now)) return true;
+        return false;
+    }
+
+    /** The art and views found onto the games: SteamGridDB's art first (RAWG's or OpenCritic's stays where it has none). */
+    private void applyV1(List<Discover.Row> target) {
+        for (Discover.Row r : target) {
+            for (Discover.Title t : r.items) {
+                JSONObject a = artById.get(t.id);
+                if (a != null) {
+                    if (!a.optString("g").isEmpty()) t.poster = a.optString("g");
+                    if (!a.optString("h").isEmpty()) t.backdrop = a.optString("h");
+                    t.square = a.optString("s");
+                    t.icon = a.optString("i");
+                }
+                JSONObject v = viewsById.get(t.id);
+                if (v != null) t.views = v.optInt("v");
+            }
+        }
+    }
+
+    /** One game's SteamGridDB art: the same game only (its exact name); textless portrait art before one with a logo. */
+    private void sgdbArt(Discover.Title t) {
+        String key = Config.STEAMGRIDDB_KEY.trim();
+        long now = System.currentTimeMillis();
+        try {
+            int game = sgdbGame(t.title, key);
+            String g = "", h = "", sq = "", ic = "";
+            if (game > 0) {
+                String opts = "types=static&nsfw=false&humor=false";
+                g = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=600x900&styles=no_logo&" + opts, key), false);
+                if (g.isEmpty()) g = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=600x900&" + opts, key), false);
+                h = sgdbPick(sgdb("/heroes/game/" + game + "?" + opts, key), true);
+                // The square: textless art; else "" (the top section then cuts the wide key art, never a boxed cover).
+                sq = sgdbPick(sgdb("/grids/game/" + game + "?dimensions=1024x1024,512x512&styles=no_logo&" + opts, key), false);
+                ic = sgdbPick(sgdb("/icons/game/" + game + "?" + opts, key), false);   // its icon (a PNG): the radar's pins
+            }
+            artById.put(t.id, new JSONObject().put("g", g).put("h", h).put("s", sq).put("i", ic).put("at", now).put("v", ART_VERSION));
+            Startup.games("art " + t.title + ": " + (game <= 0 ? "not on SteamGridDB" : (g.isEmpty() ? "" : "portrait ") + (h.isEmpty() ? "" : "wide ") + (sq.isEmpty() ? "" : "square")));
+        } catch (Exception e) {
+            AppLog.w("games art " + t.title + ": " + e.getMessage());
+            retryLater(artById, t.id, now - ART_TTL + RETRY_AFTER);
+        }
+    }
+
+    /** A failure: what was found before stays; asked again in an hour (not on every refresh). */
+    private static void retryLater(java.util.Map<Integer, JSONObject> m, int id, long at) {
+        try {
+            JSONObject e = m.get(id);
+            m.put(id, (e == null ? new JSONObject() : e).put("at", at));
+        } catch (org.json.JSONException ignored) {
+        }
+    }
+
+    /** SteamGridDB's id for the game with exactly this name (0: none; never a near name). */
+    private static int sgdbGame(String title, String key) throws Exception {
+        String q = URLEncoder.encode(title, "UTF-8").replace("+", "%20");
+        JSONArray found = sgdb("/search/autocomplete/" + q, key).optJSONArray("data");
+        for (int i = 0; found != null && i < found.length(); i++) {
+            JSONObject g = found.optJSONObject(i);
+            if (g != null && norm(title).equals(norm(g.optString("name")))) return g.optInt("id");
+        }
+        return 0;
+    }
+
+    /**
+     * The first (best voted) image's address, https only: grids as their JPEG thumbnail (≈ 270 × 400, plenty for a 226 px
+     * poster); heroes at 1920 when there's one (for the 600 px card), else their thumbnail.
+     */
+    private static String sgdbPick(JSONObject o, boolean hero) {
+        JSONArray a = o.optJSONArray("data");
+        if (a == null || a.length() == 0) return "";
+        if (hero) {
+            for (int i = 0; i < a.length() && i < 10; i++) {
+                JSONObject x = a.optJSONObject(i);
+                if (x != null && x.optInt("width") == 1920 && x.optString("url").startsWith("https://")) return x.optString("url");
+            }
+        }
+        JSONObject x = a.optJSONObject(0);
+        String u = x == null ? "" : x.optString("thumb", x.optString("url"));
+        return u.startsWith("https://") ? u : "";
+    }
+
+    /** One upcoming game's English Wikipedia views in the last 30 days (its own article only; none: 0). */
+    private void wikiViews(Discover.Title t) {
+        long now = System.currentTimeMillis();
+        try {
+            String q = URLEncoder.encode(t.title + " video game", "UTF-8");
+            JSONObject found = new JSONObject(wiki("https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=5&format=json&srsearch=" + q));
+            JSONObject query = found.optJSONObject("query");
+            JSONArray hits = query == null ? null : query.optJSONArray("search");
+            String[] titles = new String[hits == null ? 0 : hits.length()];
+            for (int i = 0; i < titles.length; i++) titles[i] = hits.optJSONObject(i) == null ? "" : hits.optJSONObject(i).optString("title");
+            int year = t.date.length() >= 4 ? Integer.parseInt(t.date.substring(0, 4)) : 0;
+            String article = GamesV1Logic.wikiArticle(titles, t.title, year);
+            int views = 0;
+            if (!article.isEmpty()) {
+                String a = URLEncoder.encode(article.replace(' ', '_'), "UTF-8").replace("+", "%20");
+                JSONObject v = new JSONObject(wiki("https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user/"
+                        + a + "/daily/" + Recs.day(-30).replace("-", "") + "/" + Recs.day(-1).replace("-", "")));
+                JSONArray items = v.optJSONArray("items");
+                for (int i = 0; items != null && i < items.length(); i++) views += Math.max(0, items.optJSONObject(i).optInt("views"));
+            }
+            viewsById.put(t.id, new JSONObject().put("v", views).put("at", now));
+            Startup.games("views " + t.title + ": " + (article.isEmpty() ? "no article" : article + " " + views));
+        } catch (Exception e) {
+            AppLog.w("games views " + t.title + ": " + e.getMessage());
+            retryLater(viewsById, t.id, now - VIEWS_TTL + RETRY_AFTER);
+        }
+    }
+
+    /** Wikimedia's API: its user-agent policy asks for a name, a version and where the client comes from. */
+    private static String wiki(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(5000);
+        c.setReadTimeout(10000);
+        c.setRequestProperty("Accept", "application/json");
+        c.setRequestProperty("User-Agent", "ibtzyTVLauncher/1.0 (Android TV home screen; https://github.com/simbasjungles/free-my-tv)");
+        try {
+            int code = c.getResponseCode();
+            if (code != 200) throw new IOException("HTTP " + code + " from " + new URL(url).getHost());
+            return read(c.getInputStream());
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    private static JSONObject byIdJson(java.util.Map<Integer, JSONObject> m) throws org.json.JSONException {
+        JSONObject o = new JSONObject();
+        for (java.util.Map.Entry<Integer, JSONObject> e : m.entrySet()) o.put(String.valueOf(e.getKey()), e.getValue());
+        return o;
+    }
+
+    private static void loadById(JSONObject o, java.util.Map<Integer, JSONObject> into) {
+        for (java.util.Iterator<String> it = o == null ? null : o.keys(); it != null && it.hasNext(); ) {
+            String key = it.next();
+            try {
+                if (o.optJSONObject(key) != null) into.put(Integer.parseInt(key), o.optJSONObject(key));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+    }
+
     /** OpenCritic's scores onto the games with the same name (only a real score; no score: "Not rated"). */
     private void applyCritics(List<Discover.Row> target) {
         applyCriticsOnly(target);
-        applyPs(target);   // last: the PS Store's cover wins where there is one
+        applyPs(target);   // the PS Store's ranks (India's chart)
+        applyV1(target);   // last: SteamGridDB's artwork wins where there is some
     }
 
     private void applyCriticsOnly(List<Discover.Row> target) {
@@ -861,29 +971,6 @@ final class Games {
         return name.replace("x", v);
     }
 
-    private static Discover.Title copy(Discover.Title t) {
-        Discover.Title c = new Discover.Title();
-        c.id = t.id;
-        c.kind = t.kind;
-        c.title = t.title;
-        c.backdrop = t.backdrop;
-        c.poster = t.poster;
-        c.date = t.date;
-        c.platforms = t.platforms;
-        c.genres = t.genres;
-        c.score = t.score;
-        c.added = t.added;
-        c.logo = t.logo;
-        c.tier = t.tier;
-        c.meta = t.meta;
-        c.rating = t.rating;
-        c.ratings = t.ratings;
-        c.ocId = t.ocId;
-        c.critics = t.critics;
-        return c;
-    }
-
-
     private static String get(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         final long t0 = android.os.SystemClock.uptimeMillis();
@@ -911,6 +998,7 @@ final class Games {
         c.setRequestProperty("Accept", "application/json");
         try {
             int code = c.getResponseCode();
+            if (code == 404) return new JSONObject();   // nothing of that kind for this game
             if (code != 200) throw new IOException("SteamGridDB returned HTTP " + code);
             return new JSONObject(read(c.getInputStream()));
         } finally {
@@ -1083,10 +1171,11 @@ final class Games {
                 a.put(new JSONObject().put("key", r.key).put("name", r.name).put("items", items));
             }
             JSONObject o = new JSONObject().put("version", VERSION).put("at", fetchedAt).put("criticsAt", criticsAt).put("rows", a)
-                    .put("oc", ocList).put("noLogo", new JSONArray(noLogo))
+                    .put("oc", ocList)
                     .put("criticsFailedAt", criticsFailedAt)
                     .put("about", aboutJson())
                     .put("ps", psJson())
+                    .put("sgdb", byIdJson(artById)).put("wiki", byIdJson(viewsById))
                     .put("ocArt2", new JSONObject(new java.util.HashMap<String, Object>(stringKeys(ocArtById))));   // kept: a restart doesn't ask OpenCritic again within the hour
             try (FileOutputStream out = new FileOutputStream(cacheFile())) {
                 out.write(o.toString().getBytes("UTF-8"));

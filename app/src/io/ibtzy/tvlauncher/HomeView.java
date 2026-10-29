@@ -3541,7 +3541,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Movies V1's poster rows: Movies & Shows' rows and, in Games V1, Just released and Trending. */
     private static boolean movieRow(String row) {
-        return row != null && (!gameRow(row) || Games.RECENT.equals(row) || Games.POPULAR.equals(row)) && !railRow(row);
+        return row != null && (!gameRow(row) || Games.RECENT.equals(row) || Games.POPULAR.equals(row));
     }
 
     private static float feedLabelH(String row) {
@@ -3566,13 +3566,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Games V1 (Release Radar): the countdown, the radar, Just released and Trending (posters, as Movies V1).
     // The rows are made from Games' rows once per change (and every 10 minutes: "today" moves), never while drawing.
 
-    private static final float CD_H = 330, CD_GAP = 24, RADAR_LABEL = 0, RADAR_H = 185, RADAR_GAP = 40, GV_ART = 330, GV_DESC_W = 1200;
+    private static final float CD_H = 330, CD_GAP = 24, RADAR_LABEL = 0, RADAR_H = 200, RADAR_GAP = 40, GV_ART = 880, GV_DESC_W = 840,
+            GV_DESC_H = 3 * MV_DESC_LINE, GV_ART_ABOVE = 112;
     // The radar (no heading): the shown game's description (2 lines) at its top, the line 123 down, the months under the pins.
-    private static final float RD_LINE = 123;
+    private static final float RD_LINE = GV_DESC_H + 24 + 28;
     private static final int RADAR_PINS = 8;
     private List<Discover.Row> gvSource;
     private List<Discover.Row> gvRows = new ArrayList<>();
     private long gvBuiltAt, gvRelease = -1, gvShownRel = -1;
+    private int gvVersion = -1;
     private long[] gvRadarRel = new long[0];
     private final java.util.TimeZone gvTz = java.util.TimeZone.getDefault();
     /** Per game: {pill, meta line, score, radar "Nov 6 · in 8 days"} made with the rows (no text made while drawing). */
@@ -3584,10 +3586,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private String gvTrend = "";
 
     private List<Discover.Row> gamesV1Rows() {
-        List<Discover.Row> src = Games.get(getContext()).rows();
+        Games games = Games.get(getContext());
+        List<Discover.Row> src = games.rows();
         long now = System.currentTimeMillis();
-        if (src == gvSource && now - gvBuiltAt < 10 * 60_000L) return gvRows;
+        if (src == gvSource && games.version() == gvVersion && now - gvBuiltAt < 10 * 60_000L) return gvRows;
         gvSource = src;
+        gvVersion = games.version();
         gvBuiltAt = now;
         Discover.Row recent = null, popular = null, upcoming = null;
         for (Discover.Row r : src) {
@@ -3601,12 +3605,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (upcoming != null && !upcoming.items.isEmpty()) {
             int n = upcoming.items.size();
             long[] rel = new long[n];
-            int[] added = new int[n];
+            int[] added = new int[n], views = new int[n];
             for (int i = 0; i < n; i++) {
                 rel[i] = GamesV1Logic.releaseMs(upcoming.items.get(i).date, gvTz);
                 added[i] = upcoming.items.get(i).added;
+                views[i] = upcoming.items.get(i).views;
             }
-            int top = GamesV1Logic.anticipated(rel, added, now);
+            int top = GamesV1Logic.anticipated(rel, added, views, now);   // Wikipedia's views first, RAWG's added else
             if (top >= 0) {
                 Discover.Title t = upcoming.items.get(top);
                 Discover.Row cd = new Discover.Row();
@@ -3615,14 +3620,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 cd.items.add(t);
                 out.add(cd);
                 gvRelease = rel[top];
-                gvText.put(t, new String[] {"", gvLine(t, rel[top]), "", ""});
+                gvText.put(t, gvInfo(t, rel[top]));
                 Games.get(getContext()).about(t);   // its description, for under the top section (once)
             }
             // The radar: the others still to come, by date (the soonest first), RADAR_PINS at most.
             List<Discover.Title> pins = new ArrayList<>();
             List<Long> when = new ArrayList<>();
             for (int i = 0; i < n && pins.size() < RADAR_PINS; i++) {
-                if (i == top || rel[i] < 0 || rel[i] + 86_400_000L <= now) continue;
+                if (rel[i] < 0 || rel[i] + 86_400_000L <= now) continue;   // (the countdown's game too: it's on the radar)
                 pins.add(upcoming.items.get(i));
                 when.add(rel[i]);
             }
@@ -3638,7 +3643,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     Discover.Title t = pins.get(order[i]);
                     radar.items.add(t);
                     ms[i] = when.get(order[i]);
-                    gvText.put(t, new String[] {"", gvLine(t, ms[i]), "", ""});
+                    gvText.put(t, gvInfo(t, ms[i]));
                 }
                 // The line: today at 180, the last pin at its end (CONTENT_R - MARGIN - 56: the pin inside it).
                 float x0 = 180, x1 = CONTENT_R - MARGIN - 28;
@@ -3681,13 +3686,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return out;
     }
 
-    /** The top section's line: "Dec 31 · PS5 · Xbox Series · PC · 1K people want it". */
-    private String gvLine(Discover.Title t, long rel) {
-        StringBuilder line = new StringBuilder(GamesV1Logic.shortDate(rel, gvTz));
-        if (!t.platforms.isEmpty()) line.append(line.length() > 0 ? " · " : "").append(t.platforms);
-        String want = GamesV1Logic.wantIt(t.added);
-        if (!want.isEmpty()) line.append(line.length() > 0 ? " · " : "").append(want);
-        return line.toString();
+    /** The top section's chips: {.., .., .., "Dec 31", "PS5 · Xbox Series · PC", "1K people want it"} ("": none). */
+    private String[] gvInfo(Discover.Title t, long rel) {
+        return new String[] {"", "", "", GamesV1Logic.shortDate(rel, gvTz), t.platforms, GamesV1Logic.wantIt(t.added)};
     }
 
     /** The game the top section shows: the focused radar pin's, else the most anticipated (gvShownRel: its date). */
@@ -3741,13 +3742,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** A card's resting width: tall (poster) cards; the prominent one is as wide as Trending's featured card, in proportion. */
     private static float feedNormalW(String row) {
-        if (railRow(row)) return Games.RECENT.equals(row) ? RAIL_NUM + RC_CARD : POP_W;
         if (movieRow(row)) return MV_W;
         return gameRow(row) ? GAME_W : 176;
     }
 
     private static float feedProminentW(String row) {
-        if (railRow(row)) return Games.RECENT.equals(row) ? RAIL_NUM + RAIL_WIDE : RAIL_WIDE;
         if (movieRow(row)) return MV_WIDE;
         if (gameRow(row)) return GAME_W;       // game tiles are already wide (16:9): focus grows them instead
         return feedCardH(row) * 780f / 380f;   // Trending: 780 × 380; the 264-high rows: 542 × 264
@@ -3757,12 +3756,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (movieRow(row)) return MV_H;
         if (Games.COUNTDOWN.equals(row)) return CD_H;
         if (Games.RADAR.equals(row)) return RADAR_H;
-        return Discover.TRENDING.equals(row) ? 380 : Games.HERO.equals(row) ? HERO_H : railRow(row) ? RAIL_H
-                : Games.UPCOMING.equals(row) ? CAL_HEAD + CAL_PER * CAL_ROW : gameRow(row) ? GAME_H : 264;
+        return Discover.TRENDING.equals(row) ? 380 : gameRow(row) ? GAME_H : 264;
     }
 
     // Games (v2): wide 16:9 tiles (RAWG's art is landscape), and a featured hero at the top of the page.
-    private static final float GAME_W = 400, GAME_H = 225, HERO_H = 600, HERO_GAP = 40;   // the hero row is the bento now   // v3: Coming soon peeks below
+    private static final float GAME_W = 400, GAME_H = 225;
 
     private static boolean gameRow(String row) {
         return row != null && row.startsWith("g-");
@@ -3772,15 +3770,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static float feedRowSpan(String row) {
         if (Games.COUNTDOWN.equals(row)) return CD_H + CD_GAP;
         if (Games.RADAR.equals(row)) return RADAR_LABEL + RADAR_H + RADAR_GAP;
-        return Games.HERO.equals(row) ? HERO_H + HERO_GAP : feedLabelH(row) + feedCardH(row)
-                + (railRow(row) ? RAIL_INFO : movieRow(row) ? MV_INFO : 0) + (movieRow(row) ? MV_ROW_GAP : FEED_ROW_GAP);
+        return feedLabelH(row) + feedCardH(row) + (movieRow(row) ? MV_INFO + MV_ROW_GAP : FEED_ROW_GAP);
     }
 
     /** Where a row's content ends (for scrolling to it): the hero's bottom, or its cards' bottom (+ the rim's room). */
     private static float feedRowEnd(String row, float top) {
         if (Games.COUNTDOWN.equals(row)) return top + CD_H;
         if (Games.RADAR.equals(row)) return top + RADAR_LABEL + RADAR_H;
-        return Games.HERO.equals(row) ? top + HERO_H : top + feedLabelH(row) + feedCardH(row) + (railRow(row) ? RAIL_INFO : movieRow(row) ? MV_INFO : 24);
+        return top + feedLabelH(row) + feedCardH(row) + (movieRow(row) ? MV_INFO : 24);
     }
 
     /**
@@ -3928,41 +3925,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         feedRow = Math.max(0, Math.min(rows.size() - 1, feedRow));
         Discover.Row row = rows.get(feedRow);
-        if (Games.HERO.equals(row.key)) {   // the bento: left/right turn it; it keeps its game when focus leaves
-            int to = gbMove(Math.min(feedColOf(row.key), 5), dx, dy, Math.min(6, row.items.size()));
-            if (to == -3 && feedRow >= rows.size() - 1) return false;
-            if (to >= 0) feedCol.put(row.key, to);
-            else {
-                resetFeedRow(row);   // leaving the bento: it's back on its first game when you return
-                feedRow += to == -2 ? -1 : 1;
-            }
-            followFeed(false);
-            return true;
-        }
-        if (Games.UPCOMING.equals(row.key) && calendarMove(row, dx, dy)) {
-            followFeed(false);
-            return true;
-        }
         if (dx != 0) {
-            if (Games.UPCOMING.equals(row.key) || Games.COUNTDOWN.equals(row.key)) return false;   // the calendar's left or right edge
-            if (railRow(row.key)) {   // a rail loops: the next game comes to the front, wide
-                if (row.items.size() < 2) return false;
-                int step = railStepOf(row.key) + dx;
-                railStep.put(row.key, step);
-                feedCol.put(row.key, GamesLogic.wrap(step, row.items.size()));
-            } else {
-                // The hero: left/right through the featured game's screenshots (the background changes); a row: its cards.
-                int next = Math.max(0, Math.min(row.items.size() - 1, feedColOf(row.key) + dx));
-                if (next == feedColOf(row.key)) return false;
-                feedCol.put(row.key, next);
-                if (Games.HERO.equals(row.key)) heroChanged();   // the hero: another featured game
-            }
+            if (Games.COUNTDOWN.equals(row.key)) return false;   // one game: no left or right
+            int next = Math.max(0, Math.min(row.items.size() - 1, feedColOf(row.key) + dx));   // a row: its cards
+            if (next == feedColOf(row.key)) return false;
+            feedCol.put(row.key, next);
         } else if (dy < 0) {
-            if (!keepsPlace(row.key)) resetFeedRow(row);
+            resetFeedRow(row);
             feedRow--;   // from the first row: -1, the switch
         } else if (dy > 0) {
             if (feedRow >= rows.size() - 1) return false;
-            if (!keepsPlace(row.key)) resetFeedRow(row);
+            resetFeedRow(row);
             feedRow++;
         }
         followFeed(false);
@@ -3972,14 +3945,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Coming into For You: every row at its first card (where you left one doesn't carry over). */
     private void resetFeedPlaces() {
         feedCol.clear();
-        railStep.clear();
         for (Spring sp : feedScrollX.values()) sp.snap(0);
     }
 
     /** Leaving a row: it slides back to its first card (smoothly: its own spring), and that's where it starts again. */
     private void resetFeedRow(Discover.Row row) {
         feedCol.put(row.key, 0);
-        railStep.remove(row.key);
         feedSpring(feedScrollX, row.key, 0.24f, 1f).target = 0;
     }
 
@@ -4005,29 +3976,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float max = Math.max(0, end - FEED_BOTTOM), y = feedScrollY.target;
         if (top - y < FEED_TOP) y = top - FEED_TOP;              // above the view: up to it
         if (bottom - y > FEED_BOTTOM) y = bottom - FEED_BOTTOM;  // below the view: just enough to show it
-        if (railRow(rows.get(feedRow).key)) y = top - FEED_TOP;  // a rail: its row comes to the top (as Netflix does)
         feedScrollY.target = Math.max(0, Math.min(max, y));
         if (snap) feedScrollY.snap(feedScrollY.target);
         Discover.Row row = rows.get(feedRow);
-        if (Games.HERO.equals(row.key)) {   // the hero: its screenshots change in place
-            heroDirty = true;
-            sky.invalidate();   // its sharp art: the screenshot chosen
-            feedBackdropSoon(snap);
-            spoken.focusMoved();
-            return;
-        }
-        if (railRow(row.key) || Games.UPCOMING.equals(row.key) || Games.COUNTDOWN.equals(row.key) || Games.RADAR.equals(row.key)) {
-            if (Games.RADAR.equals(row.key) || Games.COUNTDOWN.equals(row.key)) {   // the shown game's description
-                removeCallbacks(askAbout);
-                postDelayed(askAbout, ABOUT_DELAY_MS);
-            }
-            if (railRow(row.key)) {   // its spring is the rail's place, in cards; the description once the focus rests
-                Spring rs = feedSpring(feedScrollX, row.key, 0.24f, 1f);
-                rs.target = railStepOf(row.key);
-                if (snap) rs.snap(rs.target);
-                removeCallbacks(askAbout);
-                postDelayed(askAbout, ABOUT_DELAY_MS);
-            }
+        if (Games.COUNTDOWN.equals(row.key) || Games.RADAR.equals(row.key)) {   // no sliding: the shown game's description
+            removeCallbacks(askAbout);
+            postDelayed(askAbout, ABOUT_DELAY_MS);
             heroDirty = true;
             feedBackdropSoon(snap);
             spoken.focusMoved();
@@ -4065,10 +4019,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (snap) feedSwitchFocus.snap(sw);
         List<Discover.Row> rows = feedRows();
         boolean on = !sheetOpen && zone == Z_CARDS && tab == FOR_YOU_TAB;
-        float inBento = on && feedRow == 0 && !rows.isEmpty() && Games.HERO.equals(rows.get(0).key) ? 1 : 0;
-        changed |= gbActive.target != inBento;
-        gbActive.target = inBento;
-        if (snap) gbActive.snap(inBento);
         for (int r = 0; r < rows.size(); r++) {
             Discover.Row row = rows.get(r);
             int prominent = feedProminent(rows, r);
@@ -4107,8 +4057,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         heroArtMoving = heroArt.step(dt);
         boolean moving = feedScrollY.step(dt) | heroArtMoving | gameSheetIn.step(dt);
         moving |= feedSwitchFocus.step(dt);
-        moving |= gbActive.step(dt);
-        moving |= stepBento(dt);
         moving |= feedSection.step(dt);
         for (Spring sp : feedFocus.values()) moving |= sp.step(dt);
         for (Spring sp : feedProminence.values()) moving |= sp.step(dt);
@@ -4133,7 +4081,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (feedRow < 0 || feedRow >= rows.size()) return;
         Discover.Row row = rows.get(feedRow);
         if (row.items.isEmpty()) return;
-        Discover.Title t = Games.HERO.equals(row.key) ? heroGame(row) : row.items.get(Math.min(feedColOf(row.key), row.items.size() - 1));
+        Discover.Title t = row.items.get(Math.min(feedColOf(row.key), row.items.size() - 1));
         gameSheet = gameSheetShown = t;
         gameSheetRowKey = row.key;
         gameSheetSel = 0;
@@ -4367,11 +4315,34 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (layer) c.restore();
     }
 
+    /** Games V1's top section: OK finds the game's trailer on YouTube (its search, the first result focused). */
+    private void playTrailer(Discover.Title t) {
+        String q = android.net.Uri.encode(t.title + " official trailer");
+        android.net.Uri search = android.net.Uri.parse("https://www.youtube.com/results?search_query=" + q);
+        Intent in = new Intent(Intent.ACTION_VIEW, search).setPackage("com.google.android.youtube.tv").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(in);
+        } catch (RuntimeException e) {   // no YouTube app: any app that opens the address
+            try {
+                getContext().startActivity(new Intent(Intent.ACTION_VIEW, search).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (RuntimeException e2) {
+                AppLog.w("trailer " + t.title + ": " + e2);
+            }
+        }
+        Startup.games("trailer: " + t.title);
+    }
+
     /** OK on a For You title: the same rule as Home (launchTitle). */
     private void activateFeed() {
         // The switch: OK does nothing. A game: its details (scores and critics' reviews).
         if (feedRow < 0) return;
         if (gamesOn) {
+            List<Discover.Row> rows = feedRows();
+            Discover.Row row = feedRow < rows.size() ? rows.get(feedRow) : null;
+            if (row != null && !row.items.isEmpty() && (Games.COUNTDOWN.equals(row.key) || Games.RADAR.equals(row.key))) {
+                playTrailer(row.items.get(Games.RADAR.equals(row.key) ? Math.min(feedColOf(row.key), row.items.size() - 1) : 0));
+                return;
+            }
             openGameSheet();
             return;
         }
@@ -4432,18 +4403,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         heroDirty = true;   // a card may be openable now: its focus look follows
     }
 
-    /** A game's screenshots (its art first when RAWG lists none). */
-    private static String[] shotsOf(Discover.Title t) {
-        // The featured game's SteamGridDB hero first (current key art), then RAWG's screenshots.
-        String list = (t.hero == null || t.hero.isEmpty() ? "" : t.hero + "\n") + (t.shots == null ? "" : t.shots);
-        return list.trim().isEmpty() ? new String[] {t.backdrop} : list.trim().split("\n");
-    }
-
     /** The featured game shown (the carousel's place: left/right, or its own turn). */
-    private Discover.Title heroGame(Discover.Row hero) {
-        return hero.items.get(Math.max(0, Math.min(feedColOf(Games.HERO), hero.items.size() - 1)));
-    }
-
     /** A coming game's chip: "Tomorrow", "In 13 days" within a month, else its date. */
     private static String gameWhen(String date) {
         if (date.length() >= 10 && date.substring(5, 10).equals("12-31")) return date.substring(0, 4);   // a year only
@@ -4504,108 +4464,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return t.date.length() >= 10 ? Ui.trf("Released {date}", "date", Discover.shortDate(t.date)) : "";
     }
 
-    // MARK: - Games' cinematic hero (v3): full-screen moving art, a featured carousel, the game's own colour
-
-    private Paint heroEyebrow, heroTitle, heroInfo, heroScore;
-    private final RectF heroRect = new RectF();
-    private final Spring heroArt = new Spring(0.3f, 1f, 0);   // the art on screen (1) or gone (0)
+    // Games' old full-screen art (gone with Games V1): its spring stays at 0, so the background never redraws for it.
+    private final Spring heroArt = new Spring(0.3f, 1f, 0);
     private boolean heroArtMoving;
-    private LinearGradient heroFadeLeft, heroFadeTop, heroFadeDown;
-    private float heroFadeH;
-    /** Each picture shows this long; a game shows its first HERO_SHOTS, then the carousel turns (not while on it). */
-    private static final long HERO_SLIDE_MS = 8000, HERO_FADE_MS = 1200, HERO_TEXT_MS = 500, DRIFT_MS = 20_000;
-    private static final int HERO_SHOTS = 3;
-    private int heroShot;
-    private long heroSlideAt, artFadeAt, heroTextAt, heroSkyAt;
-    private String heroArtFrom, heroArtTo;
-    private long heroArtChangedAt;
-    private float heroFromAlpha = 1;
-    private final java.util.HashMap<String, Integer> heroColors = new java.util.HashMap<>();
 
-    /** Left/right on the hero, or the carousel's turn: the new game from its first picture; its text fades in. */
-    private void heroChanged() {
-        long now = SystemClock.uptimeMillis();
-        heroShot = 0;
-        heroSlideAt = now;
-        heroTextAt = now;
-        heroDirty = true;
-        sky.invalidate();
-        feedBackdrop();
-    }
-
-    /**
-     * The hero's clock, once a frame while its art is on screen: the next picture every 8 s (a game's first three,
-     * then the next game, unless the remote is on the hero), and frames while anything moves. The drift is slow: the
-     * background is redrawn at most 30 times a second. Returns true while frames are needed.
-     */
-    private boolean stepHero() {
-        if (heroArt.value <= 0.004f && heroArt.target == 0) return false;
-        List<Discover.Row> rows = feedRows();
-        if (rows.isEmpty() || !Games.HERO.equals(rows.get(0).key)) return false;
-        long now = SystemClock.uptimeMillis();
-        if (heroSlideAt == 0) heroSlideAt = now;
-        boolean motion = android.animation.ValueAnimator.areAnimatorsEnabled();
-        if (now - heroSlideAt >= HERO_SLIDE_MS) {
-            heroSlideAt = now;
-            Discover.Row hero = rows.get(0);
-            int shots = Math.min(HERO_SHOTS, shotsOf(heroGame(hero)).length);
-            boolean onHero = zone == Z_CARDS && feedRow == 0;
-            if (heroShot + 1 < shots) {
-                heroShot++;
-            } else if (!onHero && hero.items.size() > 1) {
-                feedCol.put(Games.HERO, (feedColOf(Games.HERO) + 1) % hero.items.size());
-                heroShot = 0;
-                heroTextAt = now;
-                heroDirty = true;
-            } else {
-                heroShot = 0;
-            }
-            feedBackdrop();
-        }
-        boolean fading = now - artFadeAt < HERO_FADE_MS || now - heroTextAt < HERO_TEXT_MS;
-        if (now - heroTextAt < HERO_TEXT_MS + 50) heroDirty = true;
-        if (fading || now - heroSkyAt >= (motion ? 33 : 1000)) {
-            heroSkyAt = now;
-            sky.invalidate();
-        }
-        return motion || fading;
-    }
-
-    /** The featured game's colour (from its art, made vivid enough to glow), or white before the art is in. */
-    private int heroTint() {
-        List<Discover.Row> rows = gamesOn ? feedRows() : null;
-        if (rows == null || rows.isEmpty() || !Games.HERO.equals(rows.get(0).key)) return 0xFFFFFFFF;
-        Integer c = heroColors.get(heroGame(rows.get(0)).backdrop);
-        return c == null ? 0xFFFFFFFF : c;
-    }
-
-    /** The art's colour: the most vivid of a 16 × 9 sample, lifted to a bright, saturated tone (once per game). */
-    private void learnColor(String key, Bitmap b) {
-        if (heroColors.containsKey(key) || b == null) return;
-        float[] hsv = new float[3], best = null;
-        float bestScore = -1;
-        for (int y = 0; y < 9; y++) {
-            for (int x = 0; x < 16; x++) {
-                int px = b.getPixel((int) ((x + 0.5f) * b.getWidth() / 16), (int) ((y + 0.5f) * b.getHeight() / 9));
-                android.graphics.Color.colorToHSV(px, hsv);
-                float score = hsv[1] * hsv[2];
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = hsv.clone();
-                }
-            }
-        }
-        if (best == null) return;
-        best[1] = Math.max(0.45f, Math.min(0.75f, best[1]));
-        best[2] = Math.max(0.9f, best[2]);
-        heroColors.put(key, android.graphics.Color.HSVToColor(best));
-    }
-
-    /**
-     * Games' hero art, full screen, in the background layer over the frosted image: the picture shown, drifting and
-     * zooming very slowly (20 s each way; still with animations off), crossfading into the next one (1.2 s); darkened
-     * on the left (the text), at the top (the tabs) and at the bottom (the rows).
-     */
     // Gaming draw timing (games-timing.txt): every 3 s, the frames drawn and their average and worst cost.
     private long gfAt, gfMaxArt, gfMaxFeed, gfSumArt, gfSumFeed;
     private int gfFrames;
@@ -4621,1016 +4483,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         gfAt = now; gfFrames = 0; gfMaxArt = gfMaxFeed = gfSumArt = gfSumFeed = 0;
     }
 
-    private void drawHeroArt(Canvas c) {
-        float a = Ui.clamp(heroArt.value);
-        if (a <= 0.004f) return;
-        List<Discover.Row> rows = feedRows();
-        if (rows.isEmpty() || !Games.HERO.equals(rows.get(0).key)) return;
-        Discover.Title g = heroGame(rows.get(0));
-        String[] shots = shotsOf(g);
-        String cur = shots[Math.max(0, heroShot) % shots.length];
-        long now = SystemClock.uptimeMillis();
-        if (!cur.equals(heroArtTo)) {
-            heroArtFrom = heroArtTo;
-            heroArtTo = cur;
-            artFadeAt = now;
-            heroArtChangedAt = now;
-        }
-        Discover d = Discover.get(getContext());
-        Bitmap to = d.card(heroArtTo, true, 1280, 720, 0);
-        Bitmap from = heroArtFrom == null ? null : d.card(heroArtFrom, true, 1280, 720, 0);
-        if (to == null) {
-            // Still loading: the last game's picture fades away (it used to stay, under this game's name: the wrong
-            // art), and the fade-in starts when this one's in.
-            float gone = Ui.clamp((now - heroArtChangedAt) / 350f);
-            if (from != null && gone >= 1) from = null;
-            heroFromAlpha = 1 - gone;
-            artFadeAt = now;
-        } else {
-            heroFromAlpha = 1;
-            if (heroArtTo.equals(shots[0])) learnColor(g.backdrop, to);
-        }
-        // The next game's picture, loading in the background so it's there when the carousel turns.
-        Discover.Row heroRow = rows.get(0);
-        if (heroRow.items.size() > 1) {
-            Discover.Title next = heroRow.items.get((heroRow.items.indexOf(g) + 1) % heroRow.items.size());
-            d.card(next.backdrop, true, 1280, 720, 0);
-        }
-        float fade = to == null ? 0 : Ui.clamp((now - artFadeAt) / (float) HERO_FADE_MS);
-        fade = fade * fade * (3 - 2 * fade);
-        c.save();
-        if (android.animation.ValueAnimator.areAnimatorsEnabled()) {
-            float p = (now % (2 * DRIFT_MS)) / (float) DRIFT_MS;   // 0 → 1 → 0
-            if (p > 1) p = 2 - p;
-            float e = p * p * (3 - 2 * p), sc = 1.02f + 0.05f * e;
-            c.translate(-0.012f * w * e, -0.008f * h * e);
-            c.scale(sc, sc, w * 0.6f, h * 0.4f);
-        }
-        tmp.set(0, 0, w, h);
-        if (from != null && fade < 1) drawCovered(c, from, tmp, a * heroFromAlpha);
-        if (to != null) drawCovered(c, to, tmp, a * (from == null ? 1 : fade));
-        c.restore();
-        if (heroFadeLeft == null || heroFadeH != h) {
-            heroFadeH = h;
-            heroFadeLeft = new LinearGradient(0, 0, w, 0, new int[] {0xE6080A08, 0x8C080A08, 0x00080A08},
-                    new float[] {0, 0.34f, 0.62f}, Shader.TileMode.CLAMP);
-            heroFadeTop = new LinearGradient(0, 0, 0, h * 0.22f, 0x8C080A08, 0x00080A08, Shader.TileMode.CLAMP);
-            heroFadeDown = new LinearGradient(0, h * 0.55f, 0, h, new int[] {0x00080A08, 0xEB080A08, 0xFF080A08},
-                    new float[] {0, 0.6f, 1}, Shader.TileMode.CLAMP);
-        }
-        fill.setColor(0xFF000000);
-        fill.setAlpha(Math.round(255 * a));
-        for (LinearGradient gr : new LinearGradient[] {heroFadeLeft, heroFadeTop, heroFadeDown}) {
-            fill.setShader(gr);
-            c.drawRect(tmp, fill);
-        }
-        fill.setShader(null);
-        fill.setAlpha(255);
-    }
-
-    /**
-     * Games' featured game over its art: a live dot in its colour and where it is in the carousel, its name very large,
-     * its platforms (the genre in the accent), its Metascore as a ring in its colour (when RAWG has one), when it comes
-     * or came out and its players, and the carousel's dots with what's next. The text fades in when the game changes.
-     */
-    // MARK: - Games' bento (A · Spotlight): one big game, two above-right, three below-right
-
-    private static final float GB_GAP = 24, BENTO_BIG_W = 840;   // Games' bento
-    private final Spring gbActive = new Spring(0.24f, 1f, 0);       // the remote in the bento (1) or not (0)
-    private final RectF bentoTile = new RectF();
-    private Paint gbTitleBig, gbTitle, gbMeta;
-    private LinearGradient bentoShadeBig, bentoShadeSmall;
-
-    /** Tile i of the bento whose top is `top` (page units), into bentoTile: fixed, from constants (no per-frame layout). */
-    private void bentoRect(int i, float top) {
-        float rx = MARGIN + BENTO_BIG_W + GB_GAP, rw = CONTENT_R - rx, th = (HERO_H - GB_GAP) / 2;
-        if (i == 0) {
-            bentoTile.set(MARGIN, top, MARGIN + BENTO_BIG_W, top + HERO_H);
-        } else if (i <= 2) {
-            float w2 = (rw - GB_GAP) / 2, x = rx + (i - 1) * (w2 + GB_GAP);
-            bentoTile.set(x, top, x + w2, top + th);
-        } else {
-            float w3 = (rw - 2 * GB_GAP) / 3, x = rx + (i - 3) * (w3 + GB_GAP);
-            bentoTile.set(x, top + th + GB_GAP, x + w3, top + HERO_H);
-        }
-    }
-
-    /**
-     * The remote in the bento: left/right turn it (the next or previous game takes the big square, wrapping round);
-     * up: the switch (-2); down: the rows (-3).
-     */
-    private static int gbMove(int at, int dx, int dy, int n) {
-        if (dx > 0) return (at + 1) % n;
-        if (dx < 0) return (at - 1 + n) % n;
-        return dy < 0 ? -2 : -3;
-    }
-
-    /**
-     * A bento tile's movement: where it's drawn now (page units, top = 0), where it came from and where it goes, and
-     * its 0 → 1 spring. Kept per game id: a refresh never moves art onto another game's tile.
-     */
-    private static final class GbTile {
-        final RectF cur = new RectF(), from = new RectF(), to = new RectF();
-        final Spring go = new Spring(0.34f, 0.92f, 1);
-        boolean placed;
-    }
-
-    private final java.util.HashMap<Integer, GbTile> gbTiles = new java.util.HashMap<>();
-    private final Paint gbArt = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final android.graphics.Matrix gbMatrix = new android.graphics.Matrix();
-    private final java.util.WeakHashMap<Bitmap, android.graphics.BitmapShader> gbShaders = new java.util.WeakHashMap<>();
-    private LinearGradient gbShade;   // 0 → 1 tall, stretched to each tile by its matrix
-    private int gbFocusLaid = -1, gbCountLaid = -1;
-    private final RectF gbLogoRect = new RectF();
-
-    /** A country's flag emoji from its two-letter code ("BR" → 🇧🇷); the TV's emoji font draws it. */
-    private static String flag(String code) {
-        if (code == null || code.length() != 2) return "";
-        String up = code.toUpperCase(java.util.Locale.ROOT);
-        return new String(Character.toChars(0x1F1E6 + up.charAt(0) - 'A')) + new String(Character.toChars(0x1F1E6 + up.charAt(1) - 'A'));
-    }
-
-    /** Game j's slot with game f focused: f takes the big square (0), the others follow it in order (1 … 5). */
-    private static int gbSlot(int j, int f, int n) {
-        return (j - f + n) % n;
-    }
-
-    /**
-     * Focus moved (or first seen): every tile's spring restarts from where the tile is drawn now towards its new slot —
-     * interruptible (a quick second press turns them mid-way, no queue), and nothing else is laid out again.
-     */
-    private void gbRelayout(Discover.Row row, boolean snap) {
-        int n = Math.min(6, row.items.size()), f = Math.min(feedColOf(row.key), n - 1);
-        for (int j = 0; j < n; j++) {
-            GbTile g = gbTiles.get(row.items.get(j).id);
-            if (g == null) {
-                g = new GbTile();
-                gbTiles.put(row.items.get(j).id, g);
-            }
-            bentoRect(gbSlot(j, f, n), 0);
-            g.to.set(bentoTile);
-            if (snap || !g.placed) {
-                g.cur.set(g.to);
-                g.from.set(g.to);
-                g.go.snap(1);
-                g.placed = true;
-            } else {
-                g.from.set(g.cur);
-                g.go.snap(0);
-                g.go.target = 1;
-            }
-        }
-        gbFocusLaid = f;
-        gbCountLaid = n;
-    }
-
-    private boolean stepBento(float dt) {
-        boolean moving = false;
-        for (GbTile g : gbTiles.values()) {
-            if (!g.go.step(dt)) continue;
-            moving = true;
-        }
-        return moving;
-    }
-
-    private void drawBento(Canvas c, Discover.Row row, float top) {
-        if (gbTitle == null) {
-            gbTitleBig = Ui.text(Ui.displaySemibold, 50 * k, 0xFFFFFFFF);   // the greeting's display face; size per draw
-            gbTitleBig.setShadowLayer(18 * k, 0, 3 * k, 0x80000000);
-            gbTitleBig.setLetterSpacing(-0.02f);
-            gbTitle = Ui.text(Ui.semibold, 24 * k, 0xFFFFFFFF);
-            gbMeta = Ui.text(Ui.medium, 16 * k, 0xC7FFFFFF);
-            for (Paint p : new Paint[] {gbTitleBig, gbTitle, gbMeta}) p.setColorFilter(IVORY_TEXT);
-            gbShade = new LinearGradient(0, 0, 0, 1, new int[] {0x00080A08, 0x00080A08, 0xE0080A08},
-                    new float[] {0, 0.38f, 1}, Shader.TileMode.CLAMP);
-        }
-        int n = Math.min(6, row.items.size());
-        if (n == 0) return;
-        int f = Math.min(feedColOf(row.key), n - 1);
-        if (f != gbFocusLaid || n != gbCountLaid) gbRelayout(row, gbFocusLaid < 0);
-        for (int j = 0; j < n; j++) if (j != f) drawBentoTile(c, row, j, top, false);
-        drawBentoTile(c, row, f, top, true);   // the big one last: its shadow and rim on top while they move
-    }
-
-    /**
-     * One tile, at its animated rect. One picture per game, made once at the big square's size (no corners), and
-     * drawn through a shader into the tile's rounded rect, cut like CSS cover: so a tile can change size every frame
-     * without a new bitmap, a clip path or a stretched image (smaller tiles are a sharp reduction of it).
-     */
-    private void drawBentoTile(Canvas c, Discover.Row row, int j, float top, boolean focused) {
-        Discover.Title t = row.items.get(j);
-        GbTile g = gbTiles.get(t.id);
-        if (g == null) return;
-        float v = g.go.value;
-        g.cur.set(g.from.left + (g.to.left - g.from.left) * v, g.from.top + (g.to.top - g.from.top) * v,
-                g.from.right + (g.to.right - g.from.right) * v, g.from.bottom + (g.to.bottom - g.from.bottom) * v);
-        float L = g.cur.left * k, T = (g.cur.top + top) * k, R = g.cur.right * k, B = (g.cur.bottom + top) * k;
-        if (B < 200 * k || T > h) return;
-        float W = R - L, H = B - T, r0 = 24 * k;
-        float fc = Ui.clamp(feedSpring(feedFocus, row.key + j, 0.24f, 0.85f).value), act = Ui.clamp(gbActive.value);
-        // Shadow (deeper on the focused one).
-        tmp.set(L, T + 10 * k, R, B + 10 * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, 0.28f + 0.3f * fc));
-        shadows.drawCached(c, tmp, r0, DEEP_BLUR * k, shadowDeep);   // resized every frame: a live blur was redone on the CPU
-        tmp.set(L, T, R, B);
-        bentoRect(0, 0);
-        int bw = Math.round(bentoTile.width() * k), bh = Math.round(bentoTile.height() * k);
-        Bitmap art = Discover.get(getContext()).card(t.backdrop, true, bw, bh, 0);
-        if (art != null) {
-            android.graphics.BitmapShader sh = gbShaders.get(art);
-            if (sh == null) {
-                sh = new android.graphics.BitmapShader(art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-                gbShaders.put(art, sh);
-            }
-            float sc = Math.max(W / art.getWidth(), H / art.getHeight());
-            gbMatrix.setScale(sc, sc);
-            gbMatrix.postTranslate(L + (W - art.getWidth() * sc) / 2, T + (H - art.getHeight() * sc) / 2);
-            sh.setLocalMatrix(gbMatrix);
-            gbArt.setShader(sh);
-            c.drawRoundRect(tmp, r0, r0, gbArt);
-            gbArt.setShader(null);
-        } else {   // still loading: never blocks; it comes with the next redraw
-            fill.setShader(null);
-            fill.setColor(0x1FFFFFFF);
-            c.drawRoundRect(tmp, r0, r0, fill);
-        }
-        gbMatrix.setScale(1, H);
-        gbMatrix.postTranslate(0, T);
-        gbShade.setLocalMatrix(gbMatrix);
-        fill.setShader(gbShade);
-        c.drawRoundRect(tmp, r0, r0, fill);
-        fill.setShader(null);
-        float dim = 0.30f * act * (1 - fc);   // the others, while the remote is in the bento: a little quieter
-        if (dim > 0.01f) {
-            fill.setColor(Ui.alpha(0xFF000000, dim));
-            c.drawRoundRect(tmp, r0, r0, fill);
-        }
-        // Text, sized with the tile: from a small tile's to the big square's, smoothly as it grows.
-        bentoRect(0, 0);
-        float bigW = bentoTile.width() * k;
-        bentoRect(5, 0);
-        float smallW = bentoTile.width() * k, big = Ui.clamp((W - smallW) / (bigW - smallW));
-        // Concept A · Premium Cinematic. Two layouts, crossfading with the tile's size as it moves (only one drawn once
-        // it settles): small tiles a name and two icon facts; the big square platform pills, the trending chip, the
-        // name, and a glass stat rail (date · players · critics), each part on its own with its 3D icon.
-        boolean coming = Discover.upcoming(t);
-        float aSmall = 1 - Ui.clamp(big / 0.6f), aBig = Ui.clamp((big - 0.4f) / 0.6f);
-        if (aSmall > 0.01f) drawGbSmall(c, t, coming, L, B, W, aSmall);
-        if (aBig > 0.01f) drawGbBig(c, t, coming, L, T, R, B, W, aBig, focused);
-        if (fc > 0.01f) {   // the rim on the focused one, just outside
-            float gp = 4 * k;
-            glassTmp.set(L - gp, T - gp, R + gp, B + gp);
-            border.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * fc));
-            border.setStrokeWidth(3 * k);
-            c.drawRoundRect(glassTmp, r0 + gp, r0 + gp, border);
-            border.setStrokeWidth(2 * k);
-        }
-    }
-
-    // MARK: - Games rails (Recently released, Popular this year) and Upcoming's release calendar
-    //
-    // The mockup's design. A rail loops: the selected game is first and wide at the margin, the previous one peeks in
-    // at the left edge, the rest follow; its info (facts, the game's own description, chips) sits under it. Every
-    // card's place and size is one function of the rail's spring (GamesLogic.railX/railW), so a move slides every card
-    // and none jumps. One spacing scale (8 · 16 · 24 · 32), 1080p units.
-
-    private static final float RAIL_H = 400, RAIL_WIDE = 712, RAIL_NUM = 170, RC_CARD = 228, POP_W = 310, RAIL_GAP = 24,
-            RAIL_INFO = 200, POP_NEXT_H = 298, POP_REST_H = 266, CAL_HEAD = 48, CAL_ROW = 76, CAL_GAP = 48;
-    private static final int CAL_COLS = 3, CAL_PER = 2, RAIL_SLOTS = 8;
     private static final long ABOUT_DELAY_MS = 350;   // the focus rests this long before a description is asked for
-
-    private final java.util.HashMap<String, Integer> railStep = new java.util.HashMap<>();
     private float[] feedXs = new float[0], feedWs = new float[0];
-    private Paint railNum, railMon, railTitle, railLine, railDesc, calNum, calTitle, calSub, calHead, railArt;
-    private LinearGradient railShade;
-    private final Matrix railMatrix = new Matrix();
-    private final java.util.WeakHashMap<Bitmap, BitmapShader> railShaders = new java.util.WeakHashMap<>();
 
-    /** A game's text for the rails and the calendar, made once (not while drawing every frame). */
-    private static final class RailText {
-        String day = "", mon = "", line = "", players = "", critics = "", trend = "", added = "", rank = "", sub = "",
-                count = "", aboutSrc;
-        final String[] about = {"", "", ""};   // the description in its three lines
-        int sig;
-    }
-
-    private final java.util.WeakHashMap<Discover.Title, RailText> railTexts = new java.util.WeakHashMap<>();
-
-    private static boolean railRow(String row) {
-        return false;   // Games V1: Just released and Trending are poster rows (movieRow) now; the rails aren't shown
-    }
-
-    /** Rows that keep their place when the remote leaves them (the rails and the calendar). */
-    private static boolean keepsPlace(String row) {
-        return false;   // every row starts again at its first card when you come back to it (sliders reset)
-    }
-
-    private int railStepOf(String row) {
-        Integer s = railStep.get(row);
-        return s == null ? 0 : s;
-    }
-
-    /** The focused rail game's description: asked for once the focus has rested (never while moving). */
+    /** The focused game's description: asked for once the focus has rested (never while moving). */
     private final Runnable askAbout = () -> {
         List<Discover.Row> rows = feedRows();
         if (!gamesOn || feedRow < 0 || feedRow >= rows.size()) return;
         Discover.Row row = rows.get(feedRow);
-        if (railRow(row.key) && !row.items.isEmpty())
-            Games.get(getContext()).about(row.items.get(GamesLogic.wrap(railStepOf(row.key), row.items.size())));
-        else if ((movieRow(row.key) || Games.RADAR.equals(row.key) || Games.COUNTDOWN.equals(row.key)) && !row.items.isEmpty())
+        if ((movieRow(row.key) || Games.RADAR.equals(row.key) || Games.COUNTDOWN.equals(row.key)) && !row.items.isEmpty())
             Games.get(getContext()).about(row.items.get(Math.min(feedColOf(row.key), row.items.size() - 1)));
     };
-
-    private void railPaints() {
-        if (railNum != null) return;
-        railNum = Ui.text(Ui.displaySemibold, 160 * k, 0xFFFFFFFF);
-        float fits = (RAIL_NUM - 18) * k, wide = railNum.measureText("00");
-        if (wide > fits) railNum.setTextSize(160 * k * fits / wide);   // two digits always fit their column
-        railMon = Ui.text(Ui.semibold, 15 * k, 0xFFFFFFFF);
-        railMon.setLetterSpacing(0.18f);
-        railTitle = Ui.text(Ui.displayItalic, 38 * k, 0xFFFFFFFF);
-        railTitle.setSubpixelText(true);   // smooth as it scales (no snapping to whole pixels)
-        railTitle.setLinearText(true);
-        railLine = Ui.text(Ui.medium, 19 * k, 0xD9FFFFFF);
-        railDesc = Ui.text(Ui.regular, 19 * k, 0xB3FFFFFF);
-        calNum = Ui.text(Ui.semibold, 40 * k, 0xFFFFFFFF);
-        calTitle = Ui.text(Ui.semibold, 21 * k, 0xFFFFFFFF);
-        calSub = Ui.text(Ui.medium, 15 * k, 0x99FFFFFF);
-        calHead = Ui.text(Ui.semibold, 15 * k, 0x8CFFFFFF);
-        calHead.setLetterSpacing(0.18f);
-        for (Paint p : new Paint[] {railNum, railMon, railTitle, railLine, railDesc, calNum, calTitle, calSub, calHead})
-            p.setColorFilter(IVORY_TEXT);
-        railArt = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        railShade = new LinearGradient(0, 0, 0, 1, new int[] {0x00080A08, 0x00080A08, 0xE0080A08},
-                new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP);
-    }
-
-    private RailText railText(Discover.Title t) {
-        RailText x = railTexts.get(t);
-        // Stage 2 fills scores, ranks and charts into the same games later: their text is made again then.
-        int sig = (((t.score * 31 + t.indiaRank) * 31 + t.rank) * 31 + t.added) * 31 + t.psNo1 + t.platforms.length();
-        if (x == null || x.sig != sig) {
-            x = new RailText();
-            x.sig = sig;
-            boolean tba = t.date.length() >= 10 && t.date.startsWith("-12-31", 4);
-            x.day = t.date.length() >= 10 ? (tba ? "—" : t.date.substring(8, 10)) : "";
-            x.mon = t.date.length() >= 10 && !tba
-                    ? Discover.shortDate(t.date).replaceAll("[^\\p{L}]", "").toUpperCase(Ui.locale()) : "";
-            StringBuilder sb = new StringBuilder();
-            String when = gbDate(t.date);
-            if (!when.isEmpty()) sb.append(Discover.upcoming(t) ? when : Ui.trf("Released {d}", "d", when));
-            if (!t.platforms.isEmpty()) sb.append(sb.length() > 0 ? "  ·  " : "").append(t.platforms);
-            if (!t.genres.isEmpty()) sb.append(sb.length() > 0 ? "  ·  " : "").append(t.genres);
-            x.line = sb.toString();
-            if (t.rating > 0 && t.ratings >= 5)
-                x.players = Ui.trf("{r} players", "r", String.format(java.util.Locale.US, "%.1f", t.rating));
-            if (t.score > 0) x.critics = Ui.trf("{n} critics", "n", t.score);
-            x.trend = t.indiaRank > 0 ? "🇮🇳 " + Ui.tr("Trending in India") : "🌍 " + Ui.tr("Trending worldwide");
-            if (t.added > 0) x.added = Ui.trf("{n} added", "n", compact(t.added));
-            if (t.rank > 0) x.rank = "#" + t.rank;
-            x.sub = t.platforms.isEmpty() ? t.genres : t.genres.isEmpty() ? t.platforms : t.platforms + " · " + t.genres;
-            x.count = t.psNo1 > 0 ? Ui.trf("#1 in {n} countries", "n", t.psNo1) : t.added > 0 ? compact(t.added) : "";
-            railTexts.put(t, x);
-        }
-        return x;
-    }
-
-    /**
-     * The description in up to three lines, wrapped once (again only when it arrives): as many whole sentences as fit
-     * three lines; a first sentence longer than that is cut at its last clause (", " "; " ": ") that fits, else at a
-     * word, and ends with a full stop. Never "…" (the owner's choice).
-     */
-    private void railAbout(RailText x, String about, float room) {
-        if (about.equals(x.aboutSrc)) return;
-        x.aboutSrc = about;
-        java.util.Arrays.fill(x.about, "");
-        if (about.isEmpty()) return;
-        List<String> lines = railWrap(about, room);
-        for (int end = about.length(); lines.size() > x.about.length; ) {
-            int from = end - 2, stop = Math.max(about.lastIndexOf(". ", from), Math.max(about.lastIndexOf("! ", from), about.lastIndexOf("? ", from)));
-            if (stop < 0) break;
-            end = stop + 1;
-            lines = railWrap(about.substring(0, end), room);
-        }
-        int n = x.about.length;
-        if (lines.size() > n) {   // one long first sentence
-            StringBuilder fits = new StringBuilder();
-            for (int l = 0; l < n; l++) fits.append(l > 0 ? " " : "").append(lines.get(l));
-            String f = fits.toString();
-            int stop = Math.max(f.lastIndexOf(", "), Math.max(f.lastIndexOf("; "), f.lastIndexOf(": ")));
-            if (stop > f.length() / 2) f = f.substring(0, stop);
-            f = f.replaceAll("[\\s,;:—–-]+$", "") + ".";
-            lines = railWrap(f, room);
-        }
-        for (int l = 0; l < n && l < lines.size(); l++) x.about[l] = lines.get(l);
-    }
-
-    private List<String> railWrap(String s, float room) {
-        List<String> out = new java.util.ArrayList<>();
-        String rest = s.trim();
-        while (!rest.isEmpty()) {
-            int cut = rest.length();
-            while (cut > 1 && railDesc.measureText(rest, 0, cut) > room) {
-                int sp = rest.lastIndexOf(' ', cut - 1);
-                cut = sp > 0 ? sp : cut - 1;
-            }
-            out.add(rest.substring(0, cut).trim());
-            rest = rest.substring(cut).trim();
-        }
-        return out;
-    }
-
-    private void drawRail(Canvas c, Discover.Row row, float y, boolean active) {
-        int n = row.items.size();
-        if (n == 0) return;
-        railPaints();
-        boolean recent = Games.RECENT.equals(row.key);
-        float pos = feedSpring(feedScrollX, row.key, 0.24f, 1f).value;
-        float normalW = feedNormalW(row.key), wideW = feedProminentW(row.key);
-        int first = (int) Math.floor(pos) - 1, slots = Math.min(n, RAIL_SLOTS), front = Math.round(pos);
-        // Each game once: the peek, then the rest; the front one drawn last (its rim on top).
-        // The loop shows (the previous game peeking in at the left) only while the remote is on this rail.
-        for (int s = first; s < first + slots; s++) {
-            // ...and not on its first game: nothing before the start until you've moved along it.
-            boolean atStart = GamesLogic.wrap(front, n) == 0;
-            if (s == front || ((!active || atStart) && s - pos < -0.5f)) continue;
-            drawRailSlot(c, row, s, pos, normalW, wideW, y, recent, active);
-        }
-        drawRailSlot(c, row, front, pos, normalW, wideW, y, recent, active);
-        // Its info, under the selected game (fading out and back in as the rail moves).
-        int step = railStepOf(row.key);
-        float a = Ui.clamp(1 - Math.abs(pos - step) * 2);
-        if (a > 0.01f) drawRailInfo(c, row.items.get(GamesLogic.wrap(step, n)), (MARGIN + (recent ? RAIL_NUM : 0)) * k,
-                (y + RAIL_H) * k, recent, a);
-    }
-
-    private static float popH(float d) {   // Popular's podium: the selected one tallest, the next a step down, then the rest
-        if (d <= 0) return RAIL_H + (POP_REST_H - RAIL_H) * Ui.clamp(-d);
-        if (d <= 1) return RAIL_H + (POP_NEXT_H - RAIL_H) * d;
-        return POP_NEXT_H + (POP_REST_H - POP_NEXT_H) * Ui.clamp(d - 1);
-    }
-
-    private void drawRailSlot(Canvas c, Discover.Row row, int s, float pos, float normalW, float wideW, float y,
-            boolean recent, boolean active) {
-        float d = s - pos, x = MARGIN + GamesLogic.railX(d, normalW, wideW, RAIL_GAP), iw = GamesLogic.railW(d, normalW, wideW);
-        if (x * k > w || (x + iw) * k < 0) return;
-        int i = GamesLogic.wrap(s, row.items.size());
-        Discover.Title t = row.items.get(i);
-        RailText tx = railText(t);
-        float f = Ui.clamp(1 - Math.abs(d));   // how selected (wide) it is now
-        float cardH = recent ? RAIL_H : popH(d);
-        float L = (recent ? x + RAIL_NUM : x) * k, R = (x + iw) * k, B = (y + RAIL_H) * k, T = B - cardH * k;
-        if (recent) {   // the release day, big (solid on the selected one, faint on the others), its month under it
-            float nr = L - 10 * k, nw = railNum.measureText(tx.day);
-            railNum.setAlpha(Math.round(255 * (0.16f + 0.84f * f)));
-            c.drawText(tx.day, nr - nw, B - 34 * k, railNum);
-            railMon.setAlpha(Math.round(255 * (0.4f + 0.45f * f)));
-            c.drawText(tx.mon, nr - nw + 4 * k, B - 8 * k, railMon);
-        }
-        float r0 = 20 * k;
-        float fc = active ? Ui.clamp(feedSpring(feedFocus, row.key + i, 0.24f, 0.85f).value) * f : 0;
-        tmp.set(L, T + 10 * k, R, B + 10 * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, 0.28f + 0.3f * f));
-        shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
-        tmp.set(L, T, R, B);
-        // One picture per game at the wide size (cached by Discover), cover-cropped to the card's size now.
-        Bitmap art = Discover.get(getContext()).card(t.backdrop, true, Math.round(RAIL_WIDE * k), Math.round(RAIL_H * k), 0);
-        if (art != null) {
-            BitmapShader sh = railShaders.get(art);
-            if (sh == null) {
-                sh = new BitmapShader(art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-                railShaders.put(art, sh);
-            }
-            float W = R - L, H = B - T, sc = Math.max(W / art.getWidth(), H / art.getHeight());
-            railMatrix.setScale(sc, sc);
-            railMatrix.postTranslate(L + (W - art.getWidth() * sc) / 2, T + (H - art.getHeight() * sc) / 2);
-            sh.setLocalMatrix(railMatrix);
-            railArt.setShader(sh);
-            c.drawRoundRect(tmp, r0, r0, railArt);
-            railArt.setShader(null);
-        } else {   // missing or still loading: a quiet tile, never blank, never blocking
-            fill.setShader(null);
-            fill.setColor(0x1FFFFFFF);
-            c.drawRoundRect(tmp, r0, r0, fill);
-        }
-        railMatrix.setScale(1, B - T);
-        railMatrix.postTranslate(0, T);
-        railShade.setLocalMatrix(railMatrix);
-        fill.setShader(railShade);
-        c.drawRoundRect(tmp, r0, r0, fill);
-        fill.setShader(null);
-        // The name on the picture: larger as the card opens. Set once at its full size and scaled with the canvas: a
-        // text size changing every frame snapped between the font's hinted sizes (the name jerked as it grew).
-        float ts = (22 + 16 * f) / 38f, nx = L + 24 * k, ny = B - 26 * k;
-        c.save();
-        c.scale(ts, ts, nx, ny);
-        float room = (float) Math.floor((R - L - 48 * k) / ts / (8 * k)) * 8 * k;   // in 8 px steps: the fit is cached
-        c.drawText(feedFit(t.title, railTitle, room), nx, ny, railTitle);
-        c.restore();
-        if (!recent && !tx.rank.isEmpty()) {   // Popular: its place, a trophy on the podium's top three
-            float ch = 34 * k, pad = 12 * k, iw0 = t.rank <= 3 ? 22 * k : 0;
-            float cw = pad + iw0 + feedChip.measureText(tx.rank) + pad;
-            glassTmp.set(L + 20 * k, T + 20 * k, L + 20 * k + cw, T + 20 * k + ch);
-            fill.setColor(0xAA141416);
-            c.drawRoundRect(glassTmp, ch / 2, ch / 2, fill);
-            if (iw0 > 0) gbIcon(c, IC_TROPHY, glassTmp.left + pad + 8 * k, glassTmp.centerY(), 16 * k, 1);
-            c.drawText(tx.rank, glassTmp.left + pad + iw0, glassTmp.centerY() + Ui.halfCap(feedChip), feedChip);
-        }
-        if (fc > 0.01f) {   // the focus rim, just outside (as the bento's)
-            float gp = 4 * k;
-            glassTmp.set(L - gp, T - gp, R + gp, B + gp);
-            border.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * fc));
-            border.setStrokeWidth(3 * k);
-            c.drawRoundRect(glassTmp, r0 + gp, r0 + gp, border);
-            border.setStrokeWidth(2 * k);
-            feedFocused.set(L, T, R, B);
-        }
-    }
-
-    /** Under the selected game: its facts, its own description (two lines, when it's in), then chips. */
-    private void drawRailInfo(Canvas c, Discover.Title t, float x, float top, boolean recent, float a) {
-        RailText tx = railText(t);
-        float room = 960 * k;
-        railAbout(tx, Games.get(getContext()).aboutKnown(t), room);
-        railLine.setAlpha(Math.round(0xD9 * a));
-        c.drawText(feedFit(tx.line, railLine, room), x, top + 44 * k, railLine);
-        railDesc.setAlpha(Math.round(0xB3 * a));
-        float last = 44;   // the baseline of the last line drawn: the facts, then each line of the description
-        for (int l = 0; l < tx.about.length; l++) {
-            if (tx.about[l].isEmpty()) continue;
-            last = 76 + 26 * l;
-            c.drawText(tx.about[l], x, top + last * k, railDesc);
-        }
-        // The chips follow the text: 16 under its last line (its descender 8 below the baseline), however many lines.
-        float cx = x, cy = top + (last + 24) * k;
-        if (!tx.players.isEmpty()) cx += railChip(c, cx, cy, IC_STAR, tx.players, a) + 8 * k;
-        if (recent && !tx.critics.isEmpty()) cx += railChip(c, cx, cy, IC_TROPHY, tx.critics, a) + 8 * k;
-        if (!recent && !tx.added.isEmpty()) cx += railChip(c, cx, cy, IC_PEOPLE, tx.added, a) + 8 * k;
-        railChip(c, cx, cy, -1, tx.trend, a);
-    }
-
-    private float railChip(Canvas c, float x, float y, int icon, String text, float a) {
-        float h = 34 * k, pad = 14 * k, iw = icon >= 0 ? 22 * k : 0, cw = pad + iw + feedChip.measureText(text) + pad;
-        glassTmp.set(x, y, x + cw, y + h);
-        fill.setShader(null);
-        fill.setColor(Ui.alpha(0x1FFFFFFF, a));
-        c.drawRoundRect(glassTmp, h / 2, h / 2, fill);
-        border.setColor(Ui.alpha(0x33FFFFFF, a));
-        border.setStrokeWidth(1 * k);
-        c.drawRoundRect(glassTmp, h / 2, h / 2, border);
-        border.setStrokeWidth(2 * k);
-        if (icon >= 0) gbIcon(c, icon, x + pad + 8 * k, y + h / 2, 16 * k, a);
-        feedChip.setAlpha(Math.round(255 * a));
-        c.drawText(text, x + pad + iw, y + h / 2 + Ui.halfCap(feedChip), feedChip);
-        feedChip.setAlpha(255);
-        return cw;
-    }
-
-    // Upcoming: the release calendar, three month columns of two games (GamesLogic.calendar), its own grid for the remote.
-
-    private final android.graphics.Rect calInk = new android.graphics.Rect();
-    private Discover.Row calFor;
-    private int[][] calCols = new int[0][];
-    private String[] calHeads = new String[0];
-
-    private int[][] calCols(Discover.Row row) {
-        if (row == calFor) return calCols;
-        String[] dates = new String[row.items.size()];
-        for (int i = 0; i < dates.length; i++) dates[i] = row.items.get(i).date;
-        calCols = GamesLogic.calendar(dates, CAL_COLS, CAL_PER);
-        calHeads = new String[calCols.length];
-        String[] months = new java.text.DateFormatSymbols(Ui.locale()).getMonths();
-        for (int j = 0; j < calCols.length; j++) {
-            String key = GamesLogic.calendarKey(dates[calCols[j][0]]);
-            calHeads[j] = (key.endsWith(" TBA") ? key.substring(0, 4) + " · " + Ui.tr("Date TBA")
-                    : months[Integer.parseInt(key.substring(5, 7)) - 1]).toUpperCase(Ui.locale());
-        }
-        calFor = row;
-        return calCols;
-    }
-
-    /** The remote in the calendar: left/right between months, up/down within one; false at its edges (the page decides). */
-    private boolean calendarMove(Discover.Row row, int dx, int dy) {
-        int[][] cols = calCols(row);
-        if (cols.length == 0) return false;
-        int at = feedColOf(row.key), cj = 0, cp = 0;
-        for (int j = 0; j < cols.length; j++) for (int q = 0; q < cols[j].length; q++) if (cols[j][q] == at) { cj = j; cp = q; }
-        int j = cj + dx, q = cp + dy;
-        if (j < 0 || j >= cols.length || q < 0 || (dy != 0 && q >= cols[j].length)) return false;
-        feedCol.put(row.key, cols[j][Math.min(q, cols[j].length - 1)]);
-        return true;
-    }
-
-    private void drawCalendar(Canvas c, Discover.Row row, float top, boolean active) {
-        railPaints();
-        int[][] cols = calCols(row);
-        String note = Ui.tr("release calendar");
-        c.drawText(note, (MARGIN + 16) * k + feedLabel.measureText(row.name), (top + 30) * k, calSub);
-        float y = top + FEED_LABEL, colW = (CONTENT_R - MARGIN - (CAL_COLS - 1) * CAL_GAP) / CAL_COLS;
-        for (int j = 0; j < cols.length; j++) {
-            float cx = MARGIN + j * (colW + CAL_GAP);
-            c.drawText(calHeads[j], cx * k, (y + 16) * k, calHead);
-            for (int q = 0; q < cols[j].length; q++) {
-                int i = cols[j][q];
-                Discover.Title t = row.items.get(i);
-                RailText tx = railText(t);
-                float e = y + CAL_HEAD + q * CAL_ROW;
-                float fc = active ? Ui.clamp(feedSpring(feedFocus, row.key + i, 0.24f, 0.85f).value) : 0;
-                if (fc > 0.01f) {   // focus: a glass pill behind the entry and the rim (nothing moves)
-                    glassTmp.set((cx - 16) * k, (e + 4) * k, (cx + colW) * k, (e + CAL_ROW - 4) * k);
-                    fill.setShader(null);
-                    fill.setColor(Ui.alpha(0x24FFFFFF, fc));
-                    c.drawRoundRect(glassTmp, 16 * k, 16 * k, fill);
-                    border.setColor(Ui.alpha(0xFFFFFFFF, 0.9f * fc));
-                    border.setStrokeWidth(3 * k);
-                    c.drawRoundRect(glassTmp, 16 * k, 16 * k, border);
-                    border.setStrokeWidth(2 * k);
-                    feedFocused.set(glassTmp);
-                }
-                // Right-aligned on the digits' ink, 24 before the name (a "1" has wide side bearings: by the ink, not the advance).
-                calNum.getTextBounds(tx.day, 0, tx.day.length(), calInk);
-                c.drawText(tx.day, (cx + 64) * k - calInk.right, (e + 52) * k, calNum);
-                float nx = (cx + 88) * k, cntW = tx.count.isEmpty() ? 0 : calSub.measureText(tx.count) + 21 * k;   // icon 15 + gap 6 (as the chips)
-                float room = (cx + colW - 12) * k - nx - cntW - 16 * k;
-                c.drawText(feedFit(t.title, calTitle, room), nx, (e + 34) * k, calTitle);
-                c.drawText(feedFit(tx.sub, calSub, room), nx, (e + 58) * k, calSub);
-                if (cntW > 0) {
-                    float rx = (cx + colW - 12) * k;
-                    c.drawText(tx.count, rx - calSub.measureText(tx.count), (e + 42) * k, calSub);
-                    gbIcon(c, IC_PEOPLE, rx - cntW + 8 * k, (e + 42) * k - Ui.halfCap(calSub), 15 * k, 0.8f);
-                }
-                if (q < cols[j].length - 1) {   // between entries: one quiet line
-                    fill.setColor(0x14FFFFFF);
-                    c.drawRect(cx * k, (e + CAL_ROW) * k - 0.5f * k, (cx + colW) * k, (e + CAL_ROW) * k + 0.5f * k, fill);
-                }
-            }
-        }
-    }
-
-    // MARK: - Bento A · Premium Cinematic: text and stats
-
-    private Paint gbVal, gbSub, gbEmoji;
-    private Bitmap[] gbIcons;
-    private static final String[] GB_ICON = {"calendar", "busts", "star", "trophy"};
-    private static final String[] GB_ICON_EMOJI = {"📅", "👥", "⭐", "🏆"};
-    private static final int IC_CAL = 0, IC_PEOPLE = 1, IC_STAR = 2, IC_TROPHY = 3;
-
-    /** A 3D icon (Fluent, fetched once into assets by tools/fetch_emojis.sh; read once): else the TV's own emoji. */
-    private void gbIcon(Canvas c, int which, float cx, float cy, float size, float alpha) {
-        if (gbIcons == null) {
-            gbIcons = new Bitmap[GB_ICON.length];
-            for (int i = 0; i < GB_ICON.length; i++) {
-                try (java.io.InputStream in = getContext().getAssets().open("emoji/" + GB_ICON[i] + ".png")) {
-                    gbIcons[i] = android.graphics.BitmapFactory.decodeStream(in);
-                    if (i == IC_PEOPLE && gbIcons[i] != null) gbIcons[i] = lighten(gbIcons[i]);
-                    if (gbIcons[i] != null) gbIcons[i] = trim(gbIcons[i]);   // centred on what's drawn, not its canvas
-                } catch (java.io.IOException ignored) {
-                }
-            }
-        }
-        Bitmap b = gbIcons[which];
-        if (b != null) {   // fitted in the size × size box, its visible part centred on (cx, cy)
-            float sc = size / Math.max(b.getWidth(), b.getHeight()), hw = b.getWidth() * sc / 2, hh = b.getHeight() * sc / 2;
-            gbLogoRect.set(cx - hw, cy - hh, cx + hw, cy + hh);
-            bitmapPaint.setAlpha(Math.round(255 * alpha));
-            c.drawBitmap(b, null, gbLogoRect, bitmapPaint);
-            bitmapPaint.setAlpha(255);
-        } else {
-            if (gbEmoji == null) gbEmoji = Ui.text(android.graphics.Typeface.DEFAULT, 20 * k, 0xFFFFFFFF);
-            gbEmoji.setTextSize(size * 0.8f);
-            gbEmoji.setAlpha(Math.round(255 * alpha));
-            String e = GB_ICON_EMOJI[which];
-            c.drawText(e, cx - gbEmoji.measureText(e) / 2, cy + Ui.halfCap(gbEmoji), gbEmoji);
-        }
-    }
-
-    /** An icon cropped to its visible pixels (Fluent's emoji sit off-centre in their square: the busts low). */
-    private static Bitmap trim(Bitmap b) {
-        int w = b.getWidth(), h = b.getHeight(), l = w, t = h, r = -1, bt = -1;
-        int[] px = new int[w * h];
-        b.getPixels(px, 0, w, 0, 0, w, h);
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                if ((px[y * w + x] >>> 24) < 16) continue;
-                if (x < l) l = x;
-                if (x > r) r = x;
-                if (y < t) t = y;
-                if (y > bt) bt = y;
-            }
-        }
-        if (r < l || bt < t) return b;
-        return Bitmap.createBitmap(b, l, t, r - l + 1, bt - t + 1);
-    }
-
-    /** Fluent's busts are near-black purple, lost on the dark glass: lifted once to a light blue (as the mockup's). */
-    private static Bitmap lighten(Bitmap b) {
-        Bitmap out = Bitmap.createBitmap(b.getWidth(), b.getHeight(), Bitmap.Config.ARGB_8888);
-        Paint p = new Paint(Paint.FILTER_BITMAP_FLAG);
-        p.setColorFilter(new android.graphics.LightingColorFilter(0xFFFFFFFF, 0x0050_78E0));
-        new Canvas(out).drawBitmap(b, 0, 0, p);
-        b.recycle();
-        return out;
-    }
-
-    /** A PlayStation exclusive: every platform it's listed for is a PlayStation (GTA VI, also on Xbox, isn't one). */
-    private static boolean gbExclusive(Discover.Title t) {
-        if (t.platforms == null || t.platforms.isEmpty()) return false;
-        for (String p : t.platforms.split(" · ")) if (!p.trim().startsWith("PS")) return false;
-        return true;
-    }
-
-    /** "Oct 13", "Dec 11", "2026" (RAWG's year-only dates are Dec 31). */
-    private static String gbDate(String date) {
-        if (date.length() < 10) return "";
-        return date.substring(5, 10).equals("12-31") ? date.substring(0, 4) : Discover.shortDate(date);
-    }
-
-    private void gbPaints() {
-        if (gbVal != null) return;
-        gbVal = Ui.text(Ui.semibold, 24 * k, 0xFFFFFFFF);
-        gbSub = Ui.text(Ui.medium, 14 * k, 0xADFFFFFF);
-        gbVal.setColorFilter(IVORY_TEXT);
-        gbSub.setColorFilter(IVORY_TEXT);
-    }
-
-    /** The name: the game's logo when there is one (fitted, never stretched), else the name in the display face. */
-    private void gbName(Canvas c, Discover.Title t, float left, float baseline, float maxW, float maxH, float size, float alpha) {
-        Bitmap logo = t.logo.isEmpty() ? null : Discover.get(getContext()).logo(t.logo);
-        if (logo != null) {
-            float sc = Math.min(maxW / logo.getWidth(), maxH / logo.getHeight());
-            gbLogoRect.set(left, baseline - logo.getHeight() * sc, left + logo.getWidth() * sc, baseline);
-            bitmapPaint.setAlpha(Math.round(255 * alpha));
-            c.drawBitmap(logo, null, gbLogoRect, bitmapPaint);
-            bitmapPaint.setAlpha(255);
-        } else {
-            gbTitleBig.setTextSize(size);
-            gbTitleBig.setAlpha(Math.round(255 * alpha));
-            c.drawText(feedFit(t.title, gbTitleBig, maxW), left - Ui.leftBearing(gbTitleBig, t.title), baseline, gbTitleBig);
-            gbTitleBig.setAlpha(255);
-        }
-    }
-
-    /** A small tile: the name, then two facts with their icons — a score (critics, else players) and when. */
-    private void drawGbSmall(Canvas c, Discover.Title t, boolean coming, float L, float B, float W, float a) {
-        gbPaints();
-        float pad = 20 * k, left = L + pad, base = B - pad, x = left;
-        gbMeta.setAlpha(Math.round(230 * a));
-        int icon = -1;
-        String v = "";
-        if (gbExclusive(t) && t.psNo1 > 0) { icon = IC_PEOPLE; v = Ui.trf("#1 in {n}", "n", t.psNo1); }
-        else if (t.score > 0) { icon = IC_TROPHY; v = String.valueOf(t.score); }
-        else if (t.rating > 0 && t.ratings >= 5) { icon = IC_STAR; v = String.format(java.util.Locale.US, "%.1f", t.rating); }
-        else if (t.added >= 50) { icon = IC_PEOPLE; v = compact(t.added) + (coming ? " " + Ui.tr("want it") : ""); }
-        if (icon >= 0) {
-            gbIcon(c, icon, x + 10 * k, base - Ui.halfCap(gbMeta), 20 * k, a);   // on the text's middle
-            x += 26 * k;
-            c.drawText(v, x, base, gbMeta);
-            x += gbMeta.measureText(v) + 18 * k;
-        }
-        String when = coming ? gameWhen(t.date) : gbDate(t.date);
-        if (!when.isEmpty() && x < L + W - 80 * k) {
-            gbIcon(c, IC_CAL, x + 10 * k, base - Ui.halfCap(gbMeta), 20 * k, a);
-            c.drawText(feedFit(when, gbMeta, L + W - pad - x - 26 * k), x + 26 * k, base, gbMeta);
-        }
-        gbMeta.setAlpha(255);
-        gbName(c, t, left, base - 34 * k, W - 2 * pad, 50 * k, 26 * k, a);
-    }
-
-    /** One part of the stat rail: icon, value, and what it is (with its source). Returns its width. */
-    private float gbStat(Canvas c, int icon, String value, String sub, float x, float cy, boolean draw, float a, boolean quiet) {
-        float w = 22 * k + 34 * k + 14 * k + Math.max(gbVal.measureText(value), gbSub.measureText(sub)) + 22 * k;
-        if (!draw) return w;
-        gbIcon(c, icon, x + 22 * k + 17 * k, cy, 34 * k, a);
-        float tx = x + 22 * k + 34 * k + 14 * k;
-        gbVal.setAlpha(Math.round(255 * a * (quiet ? 0.7f : 1)));
-        gbSub.setAlpha(Math.round(173 * a));
-        c.drawText(value, tx, cy - 2 * k, gbVal);
-        c.drawText(sub, tx, cy + 20 * k, gbSub);
-        gbVal.setAlpha(255);
-        gbSub.setAlpha(255);
-        return w;
-    }
-
-    /** The big square: platform pills, trending chip, name, and the stat rail. */
-    private void drawGbBig(Canvas c, Discover.Title t, boolean coming, float L, float T, float R, float B, float W, float a, boolean focused) {
-        gbPaints();
-        float pad = 32 * k, left = L + pad;
-        // Platform pills, then the genre in the accent (top left).
-        float px = left, py = T + 26 * k, ph = 34 * k;
-        List<String> pills = new ArrayList<>();
-        if (!t.platforms.isEmpty()) pills.addAll(java.util.Arrays.asList(t.platforms.split(" · ")));
-        int nPlat = pills.size();
-        if (!t.genres.isEmpty()) pills.add(t.genres);
-        for (int i = 0; i < pills.size(); i++) {
-            String s = pills.get(i);
-            float pw = feedChip.measureText(s) + 28 * k;
-            if (px + pw > R - 340 * k) break;   // room left for the trending chip
-            glassTmp.set(px, py, px + pw, py + ph);
-            boolean genre = i >= nPlat;
-            fill.setColor(genre ? Ui.alpha(accent(1), 0.95f * a) : Ui.alpha(0x2EFFFFFF, a));
-            c.drawRoundRect(glassTmp, ph / 2, ph / 2, fill);
-            feedChip.setColor(genre ? L_INK : 0xFFFFFFFF);
-            feedChip.setAlpha(Math.round(255 * a));
-            c.drawText(s, px + 14 * k, py + ph / 2 + Ui.halfCap(feedChip), feedChip);
-            feedChip.setColor(0xFFFFFFFF);
-            feedChip.setAlpha(255);
-            px += pw + 10 * k;
-        }
-        // Trending (top right): India when the game is on India's PS Store chart today (ps-store-db.live), else worldwide.
-        if (focused) {
-            String where = t.indiaRank > 0 ? "🇮🇳 " + Ui.tr("Trending in India") : "🌍 " + Ui.tr("Trending worldwide");
-            float cw = feedChip.measureText(where) + 32 * k, ch = 34 * k, tx = R - 22 * k - cw, ty = T + 26 * k;
-            glassTmp.set(tx, ty, tx + cw, ty + ch);
-            fill.setColor(Ui.alpha(0xAA141416, a));
-            c.drawRoundRect(glassTmp, ch / 2, ch / 2, fill);
-            border.setColor(Ui.alpha(0x33FFFFFF, a));
-            border.setStrokeWidth(1 * k);
-            c.drawRoundRect(glassTmp, ch / 2, ch / 2, border);
-            border.setStrokeWidth(2 * k);
-            feedChip.setAlpha(Math.round(255 * a));
-            c.drawText(where, tx + 16 * k, ty + ch / 2 + Ui.halfCap(feedChip), feedChip);
-            feedChip.setAlpha(255);
-        }
-        // The stat rail (bottom): when · players · critics, each with its source; never squeezed into one line.
-        int[] icons = new int[3];
-        String[] vals = new String[3], subs = new String[3];
-        boolean[] quiet = new boolean[3];
-        int n = 0;
-        String when = coming ? gbDate(t.date) : gbDate(t.date);
-        if (!when.isEmpty()) {
-            String cd = coming ? gameWhen(t.date) : Ui.tr("Released");
-            icons[n] = IC_CAL; vals[n] = when; subs[n] = cd.equals(when) ? Ui.tr("Coming") : cd; n++;
-        }
-        if (gbExclusive(t) && (t.psNo1 > 0 || t.psTop10 > 0)) {   // PS5 exclusives: the PS Store's pre-order strength
-            icons[n] = IC_PEOPLE;
-            vals[n] = t.psNo1 > 0 ? Ui.trf("#1 in {n} countries", "n", t.psNo1) : Ui.trf("Top 10 in {n} countries", "n", t.psTop10);
-            subs[n] = !t.psLabel.isEmpty() ? t.psLabel : coming ? Ui.tr("PS Store pre-orders") : Ui.tr("PS Store best-sellers");
-            n++;
-        } else if (!coming && t.rating > 0 && t.ratings >= 5) {
-            icons[n] = IC_STAR; vals[n] = String.format(java.util.Locale.US, "%.1f", t.rating);
-            subs[n] = Ui.trf("players · {n} ratings", "n", compact(t.ratings)); n++;
-        } else if (t.added >= 50) {
-            icons[n] = IC_PEOPLE; vals[n] = compact(t.added);
-            subs[n] = coming ? Ui.tr("players want it") : Ui.tr("players added it"); n++;
-        }
-        icons[n] = IC_TROPHY;
-        if (t.score > 0) { vals[n] = String.valueOf(t.score); subs[n] = Ui.tr("critics") + (t.tier.isEmpty() ? "" : " · " + t.tier); }
-        else if (t.meta > 0) { vals[n] = String.valueOf(t.meta); subs[n] = Ui.tr("critics"); }
-        else { vals[n] = Ui.tr("Not rated"); subs[n] = coming ? Ui.tr("critics after release") : Ui.tr("no critic score yet"); quiet[n] = true; }
-        n++;
-        float rh = 76 * k, rb = B - 28 * k, rt = rb - rh, total = 0;
-        for (int i = 0; i < n; i++) total += gbStat(c, icons[i], vals[i], subs[i], 0, 0, false, a, quiet[i]);
-        float rw = Math.min(total, W - 2 * pad);
-        glassTmp.set(left, rt, left + rw, rb);
-        fill.setColor(Ui.alpha(0x8C16181C, a));   // the glass: smoke over the art, a top highlight, a hairline edge
-        c.drawRoundRect(glassTmp, 22 * k, 22 * k, fill);
-        border.setColor(Ui.alpha(0x2EFFFFFF, a));
-        border.setStrokeWidth(1 * k);
-        c.drawRoundRect(glassTmp, 22 * k, 22 * k, border);
-        float sx = left, cy = (rt + rb) / 2;
-        for (int i = 0; i < n; i++) {
-            float sw = gbStat(c, icons[i], vals[i], subs[i], sx, cy, true, a, quiet[i]);
-            if (i > 0) c.drawLine(sx, rt + 16 * k, sx, rb - 16 * k, border);
-            sx += sw;
-        }
-        border.setStrokeWidth(2 * k);
-        // The name above the rail: logo (up to 620 × 140) or the name in the display face.
-        gbName(c, t, left, rt - 24 * k, Math.min(W - 2 * pad, 620 * k), 140 * k, 76 * k, a);
-    }
-
-    private void drawGamesHero(Canvas c, Discover.Row row, float top) {
-        // Scrolling up under the tabs: the whole hero (text, logo, chips, dots) fades out together; it used to be cut at
-        // the tabs' line, leaving the dots alone above the rows.
-        float vis = Ui.clamp(1 - (200 - top) / 200f);
-        if (vis <= 0.01f || row.items.isEmpty()) return;
-        boolean faded = vis < 0.995f;
-        if (faded) c.saveLayerAlpha(0, 200 * k, w, (top + HERO_H) * k, Math.round(255 * vis));
-        drawGamesHeroBody(c, row, top);
-        if (faded) c.restore();
-    }
-
-    private void drawGamesHeroBody(Canvas c, Discover.Row row, float top) {
-        Discover.Title t = heroGame(row);
-        if (heroTitle == null) {
-            heroEyebrow = Ui.text(Ui.semibold, 17 * k, 0xD9FFFFFF);
-            heroEyebrow.setLetterSpacing(0.18f);
-            heroTitle = Ui.text(Ui.semibold, 112 * k, 0xFFFFFFFF);
-            heroTitle.setLetterSpacing(-0.025f);
-            heroTitle.setShadowLayer(40 * k, 0, 6 * k, 0x73000000);
-            heroInfo = Ui.text(Ui.medium, 19 * k, 0xE0FFFFFF);
-            heroScore = Ui.text(Ui.semibold, 28 * k, 0xFFFFFFFF);
-            for (Paint p : new Paint[] {heroEyebrow, heroTitle, heroInfo, heroScore}) p.setColorFilter(IVORY_TEXT);
-        }
-        long now = SystemClock.uptimeMillis();
-        float ta = Ui.clamp((now - heroTextAt) / (float) HERO_TEXT_MS);
-        boolean layer = ta < 0.995f;
-        if (layer) c.saveLayerAlpha(0, top * k, w, (top + HERO_H) * k, Math.round(255 * ta * ta * (3 - 2 * ta)));
-        int tint = heroTint();
-        float x = MARGIN * k, y = top * k;
-        boolean coming = Discover.upcoming(t);
-        int n = row.items.size(), at = Math.min(feedColOf(row.key), n - 1);
-        // The eyebrow: a glowing dot in the game's colour, then what it is and its place in the carousel.
-        fill.setShader(null);
-        fill.setColor(Ui.alpha(tint, 0.35f));
-        c.drawCircle(x + 6 * k, y + 76 * k, 11 * k, fill);
-        fill.setColor(tint);
-        c.drawCircle(x + 6 * k, y + 76 * k, 5.5f * k, fill);
-        String what = coming ? Ui.tr("UPCOMING") + " · " + gameWhen(t.date).toUpperCase(Ui.locale()) : Ui.tr("RECENTLY RELEASED");
-        c.drawText(what + " · " + Ui.trf("{i} OF {n}", "i", at + 1, "n", n), x + 26 * k, y + 82 * k, heroEyebrow);
-        // The game's logo (SteamGridDB) in place of its typed name: up to 720 × 112, under the eyebrow, on the name's baseline.
-        Bitmap logo = t.logo == null || t.logo.isEmpty() ? null : Discover.get(getContext()).logo(t.logo);
-        if (logo != null) {
-            float lw = 720 * k, lh = 112 * k, sc = Math.min(lw / logo.getWidth(), lh / logo.getHeight());   // y+98 … y+210
-            float dw = logo.getWidth() * sc, dh = logo.getHeight() * sc;
-            heroRect.set(x, y + 210 * k - dh, x + dw, y + 210 * k);
-            bitmapPaint.setAlpha(255);
-            c.drawBitmap(logo, null, heroRect, bitmapPaint);
-        } else {
-            c.drawText(feedFit(t.title, heroTitle, 1240 * k), x - Ui.leftBearing(heroTitle, t.title), y + 200 * k, heroTitle);
-        }
-        // Chips: each platform, then the genre in the accent.
-        float cx = x, cy = y + 232 * k, ch = 40 * k;
-        List<String> chips = new ArrayList<>();
-        if (t.platforms != null && !t.platforms.isEmpty()) chips.addAll(java.util.Arrays.asList(t.platforms.split(" · ")));
-        for (int i = 0; i <= chips.size(); i++) {
-            boolean genre = i == chips.size();
-            String label = genre ? t.genres : chips.get(i);
-            if (label == null || label.isEmpty()) continue;
-            float cw = feedChip.measureText(label) + 34 * k;
-            glassTmp.set(cx, cy, cx + cw, cy + ch);
-            fill.setColor(genre ? accent(0.95f) : 0x24FFFFFF);
-            c.drawRoundRect(glassTmp, ch / 2, ch / 2, fill);
-            if (!genre) {
-                border.setColor(0x3DFFFFFF);
-                border.setStrokeWidth(1 * k);
-                c.drawRoundRect(glassTmp, ch / 2, ch / 2, border);
-                border.setStrokeWidth(2 * k);
-            }
-            feedChip.setColor(genre ? L_INK : 0xFFFFFFFF);
-            c.drawText(label, cx + 17 * k, cy + ch / 2 + Ui.halfCap(feedChip), feedChip);
-            feedChip.setColor(0xFFFFFFFF);
-            cx += cw + 12 * k;
-        }
-        // The Metascore ring in the game's colour (when RAWG has one), then when and how many players.
-        String when = t.date.length() >= 10 ? (coming ? Ui.trf("Out {date}", "date", Discover.shortDate(t.date))
-                : Ui.trf("Released {date}", "date", Discover.shortDate(t.date))) : "";
-        String players = t.added >= 50 ? (coming ? Ui.trf("{n} want it", "n", compact(t.added))
-                : Ui.trf("{n} players added it", "n", compact(t.added))) : "";
-        String rated = t.rating > 0 && t.ratings >= 5 ? Ui.trf("Players {r}★ from {n} ratings", "r",
-                String.format(java.util.Locale.US, "%.1f", t.rating), "n", compact(t.ratings)) : "";
-        StringBuilder ib = new StringBuilder();
-        joinPart(ib, when);
-        joinPart(ib, players);
-        joinPart(ib, rated);
-        // The ring: OpenCritic's Top Critic Average, else Metacritic as RAWG lists it; each named. Neither: "Not rated".
-        int ring = t.score > 0 ? t.score : t.meta;
-        if (ring <= 0 && !coming && rated.isEmpty()) ib.insert(0, Ui.tr("Not rated") + (ib.length() > 0 ? " · " : ""));
-        String info = ib.toString();
-        float ry = y + 344 * k, rr = 42 * k, rx = x + rr;
-        if (ring > 0) {
-            fill.setColor(Ui.alpha(tint, 0.22f));
-            c.drawCircle(rx, ry, rr + 14 * k, fill);
-            fill.setColor(0xF00F1210);
-            c.drawCircle(rx, ry, rr, fill);
-            border.setStrokeWidth(6 * k);
-            border.setColor(0x29FFFFFF);
-            c.drawCircle(rx, ry, rr - 3 * k, border);
-            border.setColor(tint);
-            heroRect.set(rx - rr + 3 * k, ry - rr + 3 * k, rx + rr - 3 * k, ry + rr - 3 * k);
-            border.setStrokeCap(Paint.Cap.ROUND);
-            c.drawArc(heroRect, -90, 360f * Math.min(100, ring) / 100f, false, border);
-            border.setStrokeCap(Paint.Cap.BUTT);
-            border.setStrokeWidth(2 * k);
-            String sc = String.valueOf(ring);
-            c.drawText(sc, rx - heroScore.measureText(sc) / 2, ry + Ui.halfCap(heroScore), heroScore);
-            float tx = x + 2 * rr + 24 * k;
-            String label = t.score <= 0 ? Ui.tr("Critics")
-                    : Ui.tr("Critics") + (t.tier == null || t.tier.isEmpty() ? "" : " · " + t.tier)
-                    + (t.critics > 0 ? " · " + Ui.trf("{n} reviews", "n", t.critics) : "");
-            c.drawText(label, tx, ry - 6 * k, heroInfo);
-            c.drawText(feedFit(info, heroInfo, 1100 * k), tx, ry + 24 * k, heroInfo);
-        } else if (!info.isEmpty()) {
-            c.drawText(feedFit(info, heroInfo, 1200 * k), x, ry + Ui.halfCap(heroInfo), heroInfo);
-        }
-        if (layer) c.restore();
-        // The carousel: a dot per game (the one shown long, in the accent), then what's next.
-        float dy = y + (HERO_H - 30) * k, dx = x;
-        for (int i = 0; i < n; i++) {
-            float dw = i == at ? 40 * k : 12 * k;
-            glassTmp.set(dx, dy - 6 * k, dx + dw, dy + 6 * k);
-            fill.setColor(i == at ? accent(1) : 0x59FFFFE0);
-            c.drawRoundRect(glassTmp, 6 * k, 6 * k, fill);
-            dx += dw + 10 * k;
-        }
-        if (n > 1) {
-            Discover.Title next = row.items.get((at + 1) % n);
-            String nx = Ui.trf("Next: {name}", "name", next.title)
-                    + (Discover.upcoming(next) ? " · " + gameWhen(next.date) : "");
-            feedMeta.setAlpha(165);
-            c.drawText(feedFit(nx, feedMeta, 900 * k), dx + 14 * k, dy + Ui.halfCap(feedMeta), feedMeta);
-            feedMeta.setAlpha(255);
-        }
-    }
 
     /** A game's line on its wide card: the same as its tile. */
     private static String gameMeta(String row, Discover.Title t) {
@@ -5695,10 +4558,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float cardH = feedCardH(row.key);
             float label = feedLabelH(row.key);
             if ((top + label + cardH + 40 + (movieRow(row.key) ? MV_INFO : 0)) * k < 200 * k || top * k > h) continue;
-            if (Games.HERO.equals(row.key)) {
-                drawBento(c, row, top);
-                continue;
-            }
             if (Games.COUNTDOWN.equals(row.key)) {
                 Discover.Title shown = gvShown(rows, focusedRow);
                 if (shown != null) drawCountdown(c, shown, gvShownRel, shown != row.items.get(0), top, r == focusedRow);
@@ -5715,14 +4574,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (Games.POPULAR.equals(row.key)) drawTrendChip(c, top);
             }
             else c.drawText(row.name, MARGIN * k, (top + 30) * k, feedLabel);
-            if (railRow(row.key)) {
-                drawRail(c, row, top + FEED_LABEL, r == focusedRow);
-                continue;
-            }
-            if (Games.UPCOMING.equals(row.key)) {
-                drawCalendar(c, row, top, r == focusedRow);
-                continue;
-            }
             float off = feedSpring(feedScrollX, row.key, 0.24f, 1f).value;
             int focusedCol = r == focusedRow ? feedColOf(row.key) : -1;
             int prominent = feedProminent(rows, r);
@@ -6033,9 +4884,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - Games V1 drawing: the countdown, the radar, Trending's chip, the score ring
 
-    private Paint cdEyebrow, cdNum, cdUnit, cdColon, cdTitle, cdLine, cdPill, rdLabel, rdToday, ringText, ringTextSm, trendChip;
+    private Paint cdChip, cdEyebrow, cdNum, cdUnit, cdColon, cdTitle, cdLine, cdPill, rdLabel, rdToday, ringText, ringTextSm, trendChip;
     private final RectF gvRect = new RectF();
-    private LinearGradient cdShade;
     private android.graphics.RadialGradient rdGlow;
     private float gvPaintK;
     // The countdown's digits: made when the minute changes (not on every frame), with their boxes' widths.
@@ -6044,7 +4894,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final float[] cdBoxW = new float[3];
     private static final String[] CD_UNITS = {"DAYS", "HOURS", "MINUTES"};
     private boolean cdTickPosted;
-    private static final String CD_PILL = "Details \u00B7 press OK";
+    private static final String CD_PILL = "Trailer \u00B7 press OK";
     private float cdPillW;
     private String cdTitleFor, cdTitleFit = "";
     private float cdTitleSize;
@@ -6071,6 +4921,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cdColon = Ui.text(Ui.displaySemibold, 72 * k, 0x66FFFFFF);
         cdTitle = Ui.text(Ui.displaySemibold, 56 * k, 0xFFFFFFFF);
         cdLine = Ui.text(Ui.regular, 19 * k, 0xD1FFFFFF);
+        cdChip = Ui.text(Ui.semibold, 18 * k, 0xF2FFFFFF);
+        cdChip.setColorFilter(IVORY_TEXT);
         cdPill = Ui.text(Ui.semibold, 16 * k, 0xFFFFFFFF);
         rdLabel = Ui.text(Ui.semibold, 15 * k, 0x99FFFFFF);
         rdLabel.setLetterSpacing(2f / 15);
@@ -6081,7 +4933,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         trendChip = Ui.text(Ui.semibold, 17 * k, 0xFFFFFFFF);
         for (Paint p : new Paint[] {cdNum, cdUnit, cdColon, cdTitle, cdLine, cdPill, rdLabel, ringText, ringTextSm, trendChip})
             p.setColorFilter(IVORY_TEXT);
-        cdShade = new LinearGradient(0, 0, 0, CD_H * k, new int[] {0x00080606, 0x00080606, 0x99080606}, new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP);
         rdGlow = new android.graphics.RadialGradient(0, 0, 28 * k, new int[] {0xCCFF6A3D, 0x00FF6A3D}, null, Shader.TileMode.CLAMP);
         cdPillW = cdPill.measureText(CD_PILL);
         cdMinute = -1;
@@ -6110,26 +4961,25 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             cdTickPosted = true;
             postDelayed(cdTick, GamesV1Logic.msToNextMinute(now, rel) + 50);
         }
-        // The art: a 330 square on the right, rounded 28, its shadow under it; the ivory ring when focused.
+        // The art fills the right: 880 wide, from the sub tabs' line (never above the page's top, 200) down to the end of
+        // the description under the countdown; rounded 28, its shadow under it; the ivory ring when focused. Cut like
+        // CSS cover, a little above the middle (faces).
         float artW = GV_ART, ax = CONTENT_R - artW;
-        gvRect.set(ax * k, top * k, CONTENT_R * k, (top + CD_H) * k);
+        float artTop = Math.max(top - GV_ART_ABOVE, 200 + 16), artBottom = top + CD_H + CD_GAP + GV_DESC_H;
+        float fullH = GV_ART_ABOVE + CD_H + CD_GAP + GV_DESC_H;   // its picture is made once at its tallest
+        gvRect.set(ax * k, artTop * k, CONTENT_R * k, artBottom * k);
         tmp.set(gvRect.left, gvRect.top + 16 * k, gvRect.right, gvRect.bottom + 16 * k);
         shadowDeep.setColor(0xB3000000);
         shadows.draw(c, tmp, 28 * k, DEEP_BLUR * k, shadowDeep);
-        String art = !t.hero.isEmpty() ? t.hero : !t.backdrop.isEmpty() ? t.backdrop : t.poster;
-        Bitmap b = Discover.get(getContext()).card(art, true, Math.round(artW * k), Math.round(CD_H * k), 28 * k);
+        // The textless square art first (the characters, cut to this shape), then the wide key art.
+        String art = !t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster;
+        Bitmap b = Discover.get(getContext()).card(art, true, Math.round(artW * k), Math.round(fullH * k), 0);
         fill.setShader(null);
-        if (b != null) c.drawBitmap(b, gvRect.left, gvRect.top, null);
+        if (b != null) drawCoveredRound(c, b, gvRect, 28 * k, 1);   // rounded by the shader (no clip)
         else {
             fill.setColor(0x1FFFFFFF);
             c.drawRoundRect(gvRect, 28 * k, 28 * k, fill);
         }
-        c.save();
-        c.translate(0, gvRect.top);
-        fill.setShader(cdShade);
-        c.drawRoundRect(gvRect.left, 0, gvRect.right, CD_H * k, 28 * k, 28 * k, fill);
-        fill.setShader(null);
-        c.restore();
         if (focused) {
             String pill = CD_PILL;
             float pw = cdPillW + 32 * k, ph = 36 * k, px = gvRect.left + 24 * k, py = gvRect.bottom - 24 * k - ph;
@@ -6185,7 +5035,62 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cdTitle.setTextSize(cdTitleSize);
         c.drawText(cdTitleFit, x, (top + 250) * k, cdTitle);
         String[] tx = gvText.get(t);
-        if (tx != null && !tx[1].isEmpty()) c.drawText(feedFit(tx[1], cdLine, room), x, (top + 296) * k, cdLine);
+        if (tx != null && tx.length >= 6) drawGvChips(c, tx, x, (top + 270) * k, x + room);
+    }
+
+    // The top section's facts as glass chips, each with its 3D icon: 📅 the date · 🎮 the platforms · 👥 how many want it.
+    private static final String[] GV_CHIP_ICON = {"calendar", "controller", "busts"};
+    private Bitmap[] gvChipIcons;
+    private String[] gvChipsFor;
+    private final float[] gvChipW = new float[3];
+
+    private void drawGvChips(Canvas c, String[] tx, float x, float y, float right) {
+        if (gvChipIcons == null) {   // once: Fluent's emoji (assets), mipmapped (drawn far smaller than they are)
+            gvChipIcons = new Bitmap[GV_CHIP_ICON.length];
+            for (int i = 0; i < GV_CHIP_ICON.length; i++) {
+                try (java.io.InputStream in = getContext().getAssets().open("emoji/" + GV_CHIP_ICON[i] + ".png")) {
+                    Bitmap raw = android.graphics.BitmapFactory.decodeStream(in);
+                    if (raw != null && i == 2) {   // Fluent's busts are near black: lifted to read on the dark glass
+                        Bitmap lit = Bitmap.createBitmap(raw.getWidth(), raw.getHeight(), Bitmap.Config.ARGB_8888);
+                        Paint lift = new Paint(Paint.FILTER_BITMAP_FLAG);
+                        lift.setColorFilter(new android.graphics.ColorMatrixColorFilter(new float[] {
+                                1, 0, 0, 0, 110, 0, 1, 0, 0, 110, 0, 0, 1, 0, 110, 0, 0, 0, 1, 0}));
+                        new Canvas(lit).drawBitmap(raw, 0, 0, lift);
+                        raw = lit;
+                    }
+                    gvChipIcons[i] = raw;
+                    if (raw != null) raw.setHasMipMap(true);
+                } catch (java.io.IOException ignored) {
+                }
+            }
+        }
+        if (gvChipsFor != tx) {   // measured once per game
+            gvChipsFor = tx;
+            for (int i = 0; i < 3; i++) gvChipW[i] = tx[3 + i].isEmpty() ? 0 : cdChip.measureText(tx[3 + i]);
+        }
+        float h = 40 * k, icon = 24 * k, cx = x;
+        for (int i = 0; i < 3; i++) {
+            String text = tx[3 + i];
+            if (text.isEmpty()) continue;
+            float w = 12 * k + icon + 8 * k + gvChipW[i] + 16 * k;
+            if (cx + w > right) break;   // never past the column (the art's side)
+            gvRect.set(cx, y, cx + w, y + h);
+            fill.setShader(null);
+            fill.setColor(0x14F3EDE2);
+            c.drawRoundRect(gvRect, h / 2, h / 2, fill);
+            border.setColor(0x2EF3EDE2);
+            border.setStrokeWidth(1 * k);
+            c.drawRoundRect(gvRect, h / 2, h / 2, border);
+            border.setStrokeWidth(2 * k);
+            Bitmap b = gvChipIcons[i];
+            if (b != null) {
+                float sc = icon / Math.max(b.getWidth(), b.getHeight());
+                gvRect.set(cx + 12 * k, y + (h - b.getHeight() * sc) / 2, cx + 12 * k + b.getWidth() * sc, y + (h + b.getHeight() * sc) / 2);
+                c.drawBitmap(b, null, gvRect, bitmapPaint);
+            }
+            c.drawText(text, cx + 12 * k + icon + 8 * k, y + h / 2 + Ui.halfCap(cdChip), cdChip);
+            cx += w + 12 * k;
+        }
     }
 
     /** In place of the radar's heading: the shown game's description, whole sentences, 2 lines at most (once it's in). */
@@ -6195,7 +5100,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             String text = Games.get(getContext()).aboutCached(t);
             if (text.isEmpty()) return;   // asked for when the rows are made (the countdown's) or the focus rests (a pin's)
             mvPaints();
-            lines = MoviesLogic.descriptionLines(text, GV_DESC_W * k, mvDesc::measureText, 2);
+            lines = MoviesLogic.descriptionLines(text, GV_DESC_W * k, mvDesc::measureText, 3);
             gvDesc.put(t, lines);
         }
         mvDesc.setAlpha(204);
@@ -6238,11 +5143,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < row.items.size() && i < gvPinX.length; i++) {
             Discover.Title t = row.items.get(i);
             float px = L + gvPinX[i] * k, py = cy;
-            String art = !t.backdrop.isEmpty() ? t.backdrop : t.poster;
-            Bitmap b = d.card(art, true, pin, pin, pin / 2f);
+            // Its icon (SteamGridDB, kept transparent), else its art cut round.
+            Bitmap b = !t.icon.isEmpty() ? d.logo(t.icon) : null;
+            if (b == null) b = d.card(!t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster, true, pin, pin, 0);
             fill.setColor(0xFF2A2624);
             c.drawCircle(px, py, pin / 2f, fill);
-            if (b != null) c.drawBitmap(b, px - pin / 2f, py - pin / 2f, null);
+            gvRect.set(px - pin / 2f, py - pin / 2f, px + pin / 2f, py + pin / 2f);
+            if (b != null) drawCoveredRound(c, b, gvRect, pin / 2f, 1);   // a circle: the art never past its edge
             boolean on = focused && i == col;
             border.setColor(on ? ACCENT : 0x80F3EDE2);
             border.setStrokeWidth((on ? 3 : 2) * k);
@@ -6438,21 +5345,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         coverPaint.setShader(null);
     }
 
-    /** `b` into `dst` like CSS object-fit: cover (centred; cut, never stretched), at `alpha`. */
-    private void drawCovered(Canvas c, Bitmap b, RectF dst, float alpha) {
-        float bw = b.getWidth(), bh = b.getHeight(), want = dst.width() / dst.height();
-        if (bw / bh > want) {
-            float sw = bh * want;
-            bentoSrc.set(Math.round((bw - sw) / 2), 0, Math.round((bw + sw) / 2), Math.round(bh));
-        } else {
-            float sh = bw / want;
-            bentoSrc.set(0, Math.round((bh - sh) / 2), Math.round(bw), Math.round((bh + sh) / 2));
-        }
-        bitmapPaint.setAlpha(Math.round(255 * Ui.clamp(alpha)));
-        c.drawBitmap(b, bentoSrc, dst, bitmapPaint);
-        bitmapPaint.setAlpha(255);
-    }
-
     /** Before the first feed: the rows' shapes, faintly (no spinner, no layout jump when they arrive). */
     private void drawFeedSkeleton(Canvas c) {
         fill.setShader(null);
@@ -6463,14 +5355,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (Games.COUNTDOWN.equals(key)) {   // Games V1: the countdown's boxes and title, its key art on the right
                 for (int i = 0; i < 3; i++) c.drawRoundRect((MARGIN + i * 182) * k, (y + 46) * k, (MARGIN + i * 182 + 150) * k, (y + 158) * k, 20 * k, 20 * k, fill);
                 c.drawRoundRect(MARGIN * k, (y + 206) * k, (MARGIN + 520) * k, (y + 252) * k, 16 * k, 16 * k, fill);
-                c.drawRoundRect((CONTENT_R - GV_ART) * k, y * k, CONTENT_R * k, (y + CD_H) * k, 28 * k, 28 * k, fill);
+                c.drawRoundRect((CONTENT_R - GV_ART) * k, (y - GV_ART_ABOVE) * k, CONTENT_R * k, (y + CD_H + CD_GAP + GV_DESC_H) * k, 28 * k, 28 * k, fill);
                 y += feedRowSpan(key);
                 continue;
             }
             c.drawRoundRect(MARGIN * k, (y + 8) * k, (MARGIN + 260) * k, (y + 34) * k, 13 * k, 13 * k, fill);
             float x = MARGIN, ch = feedCardH(key);
             for (int i = 0; x < CONTENT_R; i++) {
-                float cw = feedCardW(key, i, Discover.TRENDING.equals(key) || railRow(key) ? 0 : -1);
+                float cw = feedCardW(key, i, Discover.TRENDING.equals(key) ? 0 : -1);
                 float lab = feedLabelH(key);
                 c.drawRoundRect(x * k, (y + lab) * k, Math.min(x + cw, CONTENT_R) * k, (y + lab + ch) * k, 20 * k, 20 * k, fill);
                 x += cw + FEED_GAP;
@@ -8694,7 +7586,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
-        if (tab == FOR_YOU_TAB) { long ht = System.nanoTime(); drawHeroArt(c); if (gamesOn) gameFrame(System.nanoTime() - ht, true); }
         // In Explore's grid: a soft dark veil over the frosted background, so the artwork stands out.
         if (dim > 0.002f && !foldDim) {
             fill.setShader(null);

@@ -65,6 +65,52 @@ public final class GamesV1Logic {
         return best;
     }
 
+    /**
+     * The same, by English Wikipedia's views of each game's article (the last 30 days: how many look it up before it's
+     * out) when any game still to come has some; RAWG's added count otherwise.
+     */
+    public static int anticipated(long[] releaseMs, int[] added, int[] views, long nowMs) {
+        if (releaseMs == null || added == null) return -1;
+        boolean byViews = false;
+        for (int i = 0; views != null && i < views.length && i < releaseMs.length; i++)
+            byViews |= views[i] > 0 && releaseMs[i] >= 0 && releaseMs[i] + DAY > nowMs;
+        if (!byViews) return anticipated(releaseMs, added, nowMs);
+        int[] score = new int[Math.min(releaseMs.length, added.length)];
+        for (int i = 0; i < score.length; i++) score[i] = i < views.length ? Math.max(0, views[i]) : 0;
+        return anticipated(releaseMs, score, nowMs);
+    }
+
+    /**
+     * Which search result is the game's own Wikipedia article: its name exactly (punctuation aside), alone or with a
+     * "(… video game)" / "(<year>)" note; a note naming another year, or not a game, doesn't count. "": none.
+     */
+    public static String wikiArticle(String[] titles, String game, int year) {
+        String want = key(game);
+        if (titles == null || want.isEmpty()) return "";
+        String fallback = "";
+        for (String t : titles) {
+            if (t == null) continue;
+            int open = t.lastIndexOf(" (");
+            String name = open > 0 && t.endsWith(")") ? t.substring(0, open) : t;
+            String note = open > 0 && t.endsWith(")") ? t.substring(open + 2, t.length() - 1).toLowerCase(Locale.ROOT) : "";
+            if (!key(name).equals(want)) continue;
+            if (note.isEmpty()) {
+                if (fallback.isEmpty()) fallback = t;
+                continue;
+            }
+            if (!note.contains("game")) continue;
+            String digits = note.replaceAll("[^0-9]", "");
+            if (digits.length() == 4 && !digits.equals(String.valueOf(year))) continue;
+            if (digits.length() == 4) return t;   // its year: the best match
+            if (fallback.isEmpty()) fallback = t;
+        }
+        return fallback;
+    }
+
+    private static String key(String s) {
+        return s == null ? "" : s.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
+    }
+
     private static long dayIndex(long ms, TimeZone tz) {
         return Math.floorDiv(ms + tz.getOffset(ms), DAY);
     }

@@ -51,6 +51,24 @@ public class GamesV1LogicTest {
         check("empty", GamesV1Logic.anticipated(new long[0], new int[0], today), -1);
         check("none to come", GamesV1Logic.anticipated(new long[] {-1, oct29 - 5 * DAY}, new int[] {1, 2}, today), -1);
         check("null", GamesV1Logic.anticipated(null, null, today), -1);
+        // With Wikipedia's views (the last 30 days): those decide; RAWG's added only when no game has any.
+        long[] r3 = {nov13 + 40 * DAY, nov13 + 6 * DAY, nov13 + 30 * DAY};
+        check("views decide", GamesV1Logic.anticipated(r3, new int[] {1040, 951, 536}, new int[] {90_000, 2_400_000, 0}, today), 1);
+        check("no views: added", GamesV1Logic.anticipated(r3, new int[] {1040, 951, 536}, new int[] {0, 0, 0}, today), 0);
+        check("views null: added", GamesV1Logic.anticipated(r3, new int[] {1040, 951, 536}, null, today), 0);
+        check("views short: added for the rest", GamesV1Logic.anticipated(r3, new int[] {1040, 951, 536}, new int[] {5}, today), 0);
+        check("past game's views skipped", GamesV1Logic.anticipated(new long[] {oct29 - 3 * DAY, nov13}, new int[] {1, 1}, new int[] {9_999_999, 10}, today), 1);
+
+        // The Wikipedia article for a game: its own name, with "(… video game)" or its year; never another game's.
+        check("article plain", GamesV1Logic.wikiArticle(new String[] {"Grand Theft Auto VI", "Grand Theft Auto V"}, "Grand Theft Auto VI", 2026), "Grand Theft Auto VI");
+        check("article with year", GamesV1Logic.wikiArticle(new String[] {"Fable (2004 video game)", "Fable (2026 video game)"}, "Fable", 2026), "Fable (2026 video game)");
+        check("article other year", GamesV1Logic.wikiArticle(new String[] {"Fable (2004 video game)", "Fable II"}, "Fable", 2026), "");
+        check("article video game", GamesV1Logic.wikiArticle(new String[] {"Metro 2039 (video game)"}, "Metro 2039", 2027), "Metro 2039 (video game)");
+        check("article punctuation", GamesV1Logic.wikiArticle(new String[] {"Prince of Persia: The Sands of Time Remake"}, "Prince of Persia - The Sands of Time Remake", 2026), "Prince of Persia: The Sands of Time Remake");
+        check("article not a game", GamesV1Logic.wikiArticle(new String[] {"Fable (novel)"}, "Fable", 2026), "");
+        check("article none", GamesV1Logic.wikiArticle(new String[0], "Fable", 2026), "");
+        check("article null", GamesV1Logic.wikiArticle(null, "Fable", 2026), "");
+        check("article blank game", GamesV1Logic.wikiArticle(new String[] {"X"}, " ", 2026), "");
 
         // How long ago / until (calendar days, local).
         check("out today", GamesV1Logic.ago(oct29, today, TZ), "Out today");
