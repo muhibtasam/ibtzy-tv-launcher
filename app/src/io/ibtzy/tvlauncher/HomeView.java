@@ -1181,10 +1181,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tilesDirty = statusDirty = heroDirty = drawerDirty = gridDirty = motionDirty = false;
         boolean boot = stepBoot(up);
         boolean ccMoving = stepCC(dt);
-        boolean marquee = marqueeRunning && zone == Z_CARDS && !sheetOpen;
-        marqueeRunning = false;
-        if (marquee) heroLayer.invalidate();   // the focused card's long name is sliding
-        if (marqueeCard != cardIndex || zone != Z_CARDS) marqueeCard = -1;   // another card: its name waits, then slides
         if (updateClock()) {
             layoutStatus();
             status.invalidate();
@@ -1196,7 +1192,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
 
         // Busy: something is moving, or the sheet or the drawer is open.
-        boolean busy = boot || ccMoving || ccOpen || marquee || tilesMoving || hideMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
+        boolean busy = boot || ccMoving || ccOpen || tilesMoving || hideMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
                 || sheetMoving || toastFading || heroFading || greetFading || bgFading || nightMoving || dimMoving || glassFading || skeleton
                 || (!appsInTab() && (sheetOpen || sheet.value > 0.001f))   // Apps in its tab rests like the other tabs
                 || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
@@ -9355,6 +9351,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final float[] titleSize = new float[SLOTS];
     private final boolean[] titleOver = new boolean[SLOTS];
     private final String[] titleShort = new String[SLOTS];
+    private final String[][] titleWrapped = new String[SLOTS][];   // a name too long for one line: up to 2 (focused)
 
     /** Sizes card i's name; true when it doesn't fit even so (drawn over the cached card: "…", or sliding focused). */
     private boolean fitTitle(int i, Recs.Pick p) {
@@ -9377,6 +9374,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         titleSize[i] = size;
         titleOver[i] = full > textW;
         titleShort[i] = TextUtils.ellipsize(t, paint, textW, TextUtils.TruncateAt.END).toString();
+        final TextPaint measure = paint;
+        titleWrapped[i] = titleOver[i] ? TitleWrap.wrap(t, textW, measure::measureText, 2) : null;
         return titleOver[i];
     }
 
@@ -9393,12 +9392,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // At rest the name sits at the bottom; focused, it slides up (with the focus spring) to make room for its line.
         float rise = line.isEmpty() ? 0 : (metaPaint(i).getTextSize() + (big ? 12 : 9) * k) * Ui.clamp(f);
         float base0 = metaBase - rise;
-        String t = p.title == null ? "" : p.title;
-        if (titleOver[i] && i == cardIndex && zone == Z_CARDS && f > 0.9f) {
-            drawMarquee(c, t, title, base.left + pad, base0, textW, title.measureText(t));
-        } else {
+        String[] lines = titleWrapped[i];
+        float g = Ui.clamp(f);
+        if (lines == null || lines.length < 2 || g <= 0.01f) {
             c.drawText(titleShort[i], base.left + pad, base0, title);
+            return;
         }
+        // Too long for one line: focused, the whole name in 2 lines (the 2nd ends in "…" if it must), never sliding
+        // and never past the card's edges; it fades in over the resting "…" line as the focus grows.
+        int alpha = title.getAlpha();
+        title.setAlpha(Math.round(alpha * (1 - g)));
+        c.drawText(titleShort[i], base.left + pad, base0, title);
+        title.setAlpha(Math.round(alpha * g));
+        float lineH = title.getTextSize() * 1.15f;
+        c.drawText(lines[0], base.left + pad, base0 - lineH, title);
+        c.drawText(lines[1], base.left + pad, base0, title);
+        title.setAlpha(alpha);
     }
 
     /** A service's round 3D icon (diameter d at x, y): its art in a circle, lit from the top, a soft shadow under it. */
@@ -9537,59 +9546,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return (h - (m.descent - m.ascent)) / 2 - m.ascent;
     }
 
-    private static final float MARQUEE_SPEED = 60, MARQUEE_PAUSE_MS = 1200, MARQUEE_GAP = 60;
-    private long marqueeAt;          // when the focused card's name started (or will start) sliding
-    private int marqueeCard = -1;
-    private boolean marqueeRunning;  // a name slid in the last frame drawn: the next frame is needed too
-    private LinearGradient marqueeOut, marqueeIn;
-    private float marqueeFadeW;
-    private final Matrix marqueeMatrix = new Matrix();
-
-    private void drawMarquee(Canvas c, String text, TextPaint paint, float x, float base, float room, float full) {
-        long up = SystemClock.uptimeMillis();
-        if (marqueeCard != cardIndex) {
-            marqueeCard = cardIndex;
-            marqueeAt = up;
-        }
-        float cycle = full + MARQUEE_GAP * k;   // one turn: the whole name and the gap after it
-        float t = Math.max(0, up - marqueeAt - MARQUEE_PAUSE_MS) / 1000f;
-        float shift = (t * MARQUEE_SPEED * k) % cycle;
-        if (t * MARQUEE_SPEED * k >= cycle) {   // a turn done: rest at the start again, then slide again
-            marqueeAt = up;
-            shift = 0;
-        }
-        float fade = 14 * k, top = base - paint.getTextSize() * 1.2f, bottom = base + paint.getTextSize() * 0.4f;
-        int save = c.saveLayer(x - 1, top, x + room + 1, bottom, null);
-        c.clipRect(x, top, x + room, bottom);
-        c.drawText(text, x - shift, base, paint);
-        if (shift > full + MARQUEE_GAP * k - room) c.drawText(text, x - shift + cycle, base, paint);   // the next turn coming in
-        // Soft edges: the text fades out at the right (and at the left while it slides).
-        if (marqueeOut == null || marqueeFadeW != fade) {   // made once (they were made twice on every frame of the slide)
-            marqueeOut = new LinearGradient(0, 0, fade, 0, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP);
-            marqueeIn = new LinearGradient(0, 0, fade, 0, 0xFF000000, 0x00000000, Shader.TileMode.CLAMP);
-            marqueeFadeW = fade;
-        }
-        marqueeMatrix.setTranslate(x + room - fade, 0);
-        marqueeOut.setLocalMatrix(marqueeMatrix);
-        marqueeFade.setShader(marqueeOut);
-        c.drawRect(x + room - fade, top, x + room, bottom, marqueeFade);
-        if (shift > 0) {
-            marqueeMatrix.setTranslate(x, 0);
-            marqueeIn.setLocalMatrix(marqueeMatrix);
-            marqueeFade.setShader(marqueeIn);
-            c.drawRect(x, top, x + fade, bottom, marqueeFade);
-        }
-        c.restoreToCount(save);
-        marqueeRunning = true;
-    }
-
-    private final Paint marqueeFade = marqueeFadePaint();
-
-    private static Paint marqueeFadePaint() {
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT));
-        return p;
-    }
 
     /**
      * The round buttons (Wi-Fi, Bluetooth and Settings by default): icon-only glass circles (light by day, smoked at
