@@ -3536,7 +3536,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // Movies V1 (For You's movie and show rows): 226 × 340 posters, the focused one 600 × 340 landscape; a serif heading
     // (40) 16 above the cards; the focused card's description (whole sentences, 3 lines of 19 at most) 24 below them,
     // clear of the focus ring; 40 between rows.
-    private static final float MV_W = 226, MV_WIDE = 600, MV_H = 340, MV_LABEL = 64, MV_DESC_GAP = 24, MV_DESC_LINE = 19 * 1.45f,
+    private static final float MV_W = 226, MV_WIDE = 600, MV_H = 340, MV_LABEL = 80, MV_DESC_GAP = 24, MV_DESC_LINE = 19 * 1.45f,
             MV_INFO = MV_DESC_GAP + 3 * MV_DESC_LINE + 4, MV_ROW_GAP = 40;
 
     private static boolean movieRow(String row) {
@@ -3650,7 +3650,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * with the wide card), opening and closing smoothly (`settled`: as it will be, for scrolling to a row).
      */
     private float feedRowTop(List<Discover.Row> rows, int r, boolean settled) {
-        float y = FEED_TOP + SWITCH_SPACE;
+        // The sub tabs' room: there while they show (the tabs or the switch focused), closed while the remote is in the rows.
+        float y = FEED_TOP + SWITCH_SPACE * (settled ? feedSwitchVis.target : Ui.clamp(feedSwitchVis.value));
         for (int i = 0; i < r && i < rows.size(); i++) {
             String key = rows.get(i).key;
             y += feedRowSpan(key);
@@ -3889,6 +3890,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private boolean retargetFeed(boolean snap) {
         boolean changed = false;
         float sw = !sheetOpen && zone == Z_CARDS && tab == FOR_YOU_TAB && feedRow < 0 ? 1 : 0;
+        float vis = zone == Z_CARDS && tab == FOR_YOU_TAB && feedRow >= 0 && !sheetOpen ? 0 : 1;
+        changed |= feedSwitchVis.target != vis;
+        feedSwitchVis.target = vis;
+        if (snap) feedSwitchVis.snap(vis);
         changed |= feedSwitchFocus.target != sw;
         feedSwitchFocus.target = sw;
         if (snap) feedSwitchFocus.snap(sw);
@@ -3942,7 +3947,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (Spring sp : feedFocus.values()) moving |= sp.step(dt);
         for (Spring sp : feedProminence.values()) moving |= sp.step(dt);
         for (Spring sp : feedInfo.values()) moving |= sp.step(dt);
-        moving |= subIconsPlaying();   // Tabs V1: the sub tabs' icons, only while they play
+        moving |= subIconsPlaying() | feedSwitchVis.step(dt);   // Tabs V1: the sub tabs' icons, only while they play
         for (Spring sp : feedScrollX.values()) moving |= sp.step(dt);
         return moving;
     }
@@ -5580,6 +5585,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // light under it; the remote on them: lifts 8, grows 5 %, ivory ring, and its icon plays.
 
     private long feedSwitchedAt, feedPlayFrom;
+    private final Spring feedSwitchVis = new Spring(0.24f, 1f, 1);   // the sub tabs: shown above the rows, hidden in them
     private boolean feedWasPlaying;
     private LinearGradient subIvory, subGraphite;
     private android.graphics.RadialGradient subGlow;
@@ -5598,7 +5604,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             subGraphite = new LinearGradient(0, 0, 0.36f, 1, 0xFF2E2C2A, 0xFF141312, Shader.TileMode.CLAMP);
             subGlow = new android.graphics.RadialGradient(0.5f, 0.5f, 0.5f, 0x8CFFE2AA, 0x00FFE2AA, Shader.TileMode.CLAMP);
         }
-        float focus = Ui.clamp(feedSwitchFocus.value);
+        float focus = Ui.clamp(feedSwitchFocus.value), vis = Ui.clamp(feedSwitchVis.value);
+        if (vis < 0.01f) return;   // hidden while the remote is in the rows
+        int layer = vis < 0.99f ? c.saveLayerAlpha(0, top - 30 * k, (MARGIN + 240) * k, top + t + 40 * k, Math.round(255 * vis)) : -1;
         long now = SystemClock.uptimeMillis();
         boolean play = subIconsPlaying();
         if (play && !feedWasPlaying) feedPlayFrom = now;   // each play starts at the icon's rest
@@ -5606,7 +5614,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float time = play ? (now - feedPlayFrom) / 1000f : Float.NaN;
         for (int i = 0; i < 2; i++) {
             boolean selected = (i == 1) == gamesOn;
-            float f = selected ? focus : 0, sc = 1 + 0.05f * f, lift = 8 * k * f;
+            float f = selected ? focus : 0, sc = 1, lift = 0;   // focus: the ring only
             float cx = MARGIN * k + i * (t + gap) + t / 2, cy = top + t / 2 - lift, half = t * sc / 2, rr = 24 * k * sc;
             cell.set(cx - half, cy - half, cx + half, cy + half);
             if (selected) {
@@ -5651,6 +5659,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 border.setStrokeWidth(2 * k);
             }
         }
+        if (layer >= 0) c.restoreToCount(layer);
     }
 
     /**
@@ -8209,6 +8218,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // capsule with its name (its icon on a dark tile); the remote on the tabs lifts it 6 px with the ivory ring.
 
     private final Spring[] tabSel = new Spring[TABS];
+    private final Spring[] tabOpen = new Spring[TABS];   // the capsule with its name: only while the remote is on the tabs
     private final float[] tabCap = new float[TABS];
     private Paint tabName;
     private LinearGradient tabGraphite, tabIvory, tabInner;
@@ -8219,12 +8229,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return tabSel[i];
     }
 
+    private Spring tabOpen(int i) {
+        if (tabOpen[i] == null) tabOpen[i] = new Spring(0.26f, 0.9f, i == tab && zone == Z_TOP ? 1 : 0);
+        return tabOpen[i];
+    }
+
     private boolean stepTabs(float dt) {
         boolean moving = false;
+        boolean onTabs = !sheetOpen && zone == Z_TOP && topIndex < TABS;
         for (int i = 0; i < TABS; i++) {
             Spring sp = tabSel(i);
             sp.target = i == tab ? 1 : 0;
             moving |= sp.step(dt);
+            Spring op = tabOpen(i);
+            op.target = i == tab && onTabs ? 1 : 0;   // in the page: the active tab as its icon alone
+            moving |= op.step(dt);
         }
         if (moving) heroDirty = true;
         return moving;
@@ -8238,7 +8257,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float x = MARGIN * k, top = L_TABBAR_TOP * k, hh = TabsLogic.TILE * k;
         for (int i = 0; i < TABS; i++) {
-            float wv = TabsLogic.tabWidth(tabSel(i).value, tabCap[i]) * k;
+            float wv = TabsLogic.tabWidth(tabOpen(i).value, tabCap[i]) * k;
             topRects[i].set(x, top, x + wv, top + hh);
             x += wv + 16 * k;
         }
@@ -8259,7 +8278,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float focus = Ui.clamp(topFocus[tab].value), rr = 24 * k;
         for (int i = 0; i < TABS; i++) {
-            float sel = Ui.clamp(tabSel(i).value), lift = i == tab ? 6 * k * focus : 0;
+            float sel = Ui.clamp(tabSel(i).value), open = Ui.clamp(tabOpen(i).value), lift = 0;   // focus: the ring only
             cell.set(topRects[i]);
             cell.offset(0, -lift);
             // Its shadow: dark under a tile, warm under the capsule (cached blurs: the same shapes once settled).
@@ -8299,10 +8318,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 fill.setAlpha(255);
             }
             TabIcons.tab(c, i == APPS_TAB ? 2 : i == FOR_YOU_TAB ? 1 : 0, icx, icy, (32 - 2 * sel) * k, blend(0xD9F3EDE2, 0xFFF3EDE2, sel));
-            if (sel > 0.01f) {   // its name, appearing as the tile stretches (never past the capsule's edge)
+            if (open > 0.01f) {   // its name, appearing as the tile stretches (never past the capsule's edge)
                 c.save();
                 c.clipRect(cell);
-                tabName.setAlpha(Math.round(255 * sel));
+                tabName.setAlpha(Math.round(255 * open));
                 c.drawText(tabs()[i], cell.left + 80 * k, icy + Ui.halfCap(tabName), tabName);
                 tabName.setAlpha(255);
                 c.restore();
