@@ -32,6 +32,9 @@ import java.util.concurrent.Future;
  */
 final class Games {
     static final String HERO = "g-hero", RECENT = "g-recent", UPCOMING = "g-upcoming", POPULAR = "g-popular";
+    // Games V1 (Release Radar): the countdown to the most anticipated game and the radar of the others coming (HomeView
+    // makes these rows from Upcoming).
+    static final String COUNTDOWN = "g-countdown", RADAR = "g-radar";
     private static final long TTL = 6 * 3600_000L, RETRY = 15 * 60_000L;
     private static final int VERSION = 11, PER_ROW = 14;   // 7: Recently released, Upcoming, Popular; ratings
     private static final long CRITICS_TTL = 24 * 3600_000L;   // OpenCritic's lists: once a day
@@ -138,6 +141,12 @@ final class Games {
      * rests on it, on the one io thread, so never two at once; kept for the session). "" until it's in (listeners
      * hear), or when there's none or it failed (not asked again this session).
      */
+    /** The description if it's in already ("" otherwise); never asks (safe while drawing). */
+    String aboutCached(Discover.Title t) {
+        String have = t == null ? null : about.get(t.id);
+        return have == null ? "" : have;
+    }
+
     String about(Discover.Title t) {
         if (t.id <= 0) return "";
         String have = about.get(t.id);

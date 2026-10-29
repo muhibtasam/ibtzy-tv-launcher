@@ -1,0 +1,182 @@
+package io.ibtzy.tvlauncher;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
+
+/**
+ * For You's Games V1 (Release Radar), without Android: the countdown to the most anticipated game, the radar's pins and
+ * months, and the posters' texts ("4 days ago", "PS5 · PC · Action · ★4.6"). Dates are RAWG's "YYYY-MM-DD", local midnight.
+ */
+public final class GamesV1Logic {
+    private GamesV1Logic() {
+    }
+
+    private static final long DAY = 86_400_000L, HOUR = 3_600_000L, MIN = 60_000L;
+    private static final String[] MONTHS = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+    private static final String[] MONTH_NAMES = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    /** "2026-11-13" → its local midnight (ms); -1 when missing or malformed. */
+    public static long releaseMs(String date, TimeZone tz) {
+        if (date == null || date.length() < 10 || date.charAt(4) != '-' || date.charAt(7) != '-') return -1;
+        try {
+            int y = Integer.parseInt(date.substring(0, 4)), m = Integer.parseInt(date.substring(5, 7)), d = Integer.parseInt(date.substring(8, 10));
+            if (m < 1 || m > 12 || d < 1) return -1;
+            Calendar c = Calendar.getInstance(tz, Locale.US);
+            c.clear();
+            c.set(y, m - 1, 1);
+            if (d > c.getActualMaximum(Calendar.DAY_OF_MONTH)) return -1;
+            c.set(Calendar.DAY_OF_MONTH, d);
+            return c.getTimeInMillis();
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /** {days, hours, minutes} left (rounded down); all 0 once it's out; null without a date. */
+    public static int[] countdown(long releaseMs, long nowMs) {
+        if (releaseMs < 0) return null;
+        long left = Math.max(0, releaseMs - nowMs);
+        return new int[] {(int) (left / DAY), (int) (left % DAY / HOUR), (int) (left % HOUR / MIN)};
+    }
+
+    /** The countdown's next change: ms until its minute turns (60 s when exactly on one). */
+    public static long msToNextMinute(long nowMs, long releaseMs) {
+        long left = releaseMs - nowMs, r = left % MIN;
+        return r <= 0 ? MIN : r;
+    }
+
+    /** Two digits at least ("06"); never negative. */
+    public static String two(int n) {
+        n = Math.max(0, n);
+        return n < 10 ? "0" + n : String.valueOf(n);
+    }
+
+    /** The game to count down to: the most added of those not out before today (ties: the sooner); -1: none. */
+    public static int anticipated(long[] releaseMs, int[] added, long nowMs) {
+        if (releaseMs == null || added == null) return -1;
+        int best = -1;
+        for (int i = 0; i < releaseMs.length && i < added.length; i++) {
+            if (releaseMs[i] < 0 || releaseMs[i] + DAY <= nowMs) continue;
+            if (best < 0 || added[i] > added[best] || added[i] == added[best] && releaseMs[i] < releaseMs[best]) best = i;
+        }
+        return best;
+    }
+
+    private static long dayIndex(long ms, TimeZone tz) {
+        return Math.floorDiv(ms + tz.getOffset(ms), DAY);
+    }
+
+    /** A poster's pill: "Out today", "Yesterday", "4 days ago", "Last week", "2 weeks ago"; "" when older or to come. */
+    public static String ago(long releaseMs, long nowMs, TimeZone tz) {
+        if (releaseMs < 0) return "";
+        long days = dayIndex(nowMs, tz) - dayIndex(releaseMs, tz);
+        if (days < 0 || days >= 35) return "";
+        if (days == 0) return "Out today";
+        if (days == 1) return "Yesterday";
+        if (days < 7) return days + " days ago";
+        if (days < 14) return "Last week";
+        return days / 7 + " weeks ago";
+    }
+
+    /** A pin's card: "today", "tomorrow", "in 8 days"; "" when out or without a date. */
+    public static String until(long releaseMs, long nowMs, TimeZone tz) {
+        if (releaseMs < 0) return "";
+        long days = dayIndex(releaseMs, tz) - dayIndex(nowMs, tz);
+        if (days < 0) return "";
+        return days == 0 ? "today" : days == 1 ? "tomorrow" : "in " + days + " days";
+    }
+
+    /** "Nov 13"; "" without a date. */
+    public static String shortDate(long ms, TimeZone tz) {
+        if (ms < 0) return "";
+        Calendar c = Calendar.getInstance(tz, Locale.US);
+        c.setTimeInMillis(ms);
+        return MONTH_NAMES[c.get(Calendar.MONTH)] + " " + c.get(Calendar.DAY_OF_MONTH);
+    }
+
+    /** The radar's right end: the last game's date, 60 days from now at least. */
+    public static long radarEnd(long[] releaseMs, long nowMs) {
+        long end = nowMs + 60 * DAY;
+        if (releaseMs != null) for (long r : releaseMs) end = Math.max(end, r);
+        return end;
+    }
+
+    /**
+     * Each pin's x on the line from x0 (now) to x1 (end), by its date; bad or past dates at x0. Pins never closer than
+     * minGap (pushed right in date order, then back from x1 so none passes it).
+     */
+    public static float[] pinX(long[] releaseMs, long nowMs, long endMs, float x0, float x1, float minGap) {
+        int n = releaseMs == null ? 0 : releaseMs.length;
+        float[] xs = new float[n];
+        Integer[] order = new Integer[n];
+        double span = Math.max(1, endMs - nowMs);
+        for (int i = 0; i < n; i++) {
+            long r = releaseMs[i];
+            xs[i] = r < 0 || r <= nowMs ? x0 : (float) (x0 + Math.min(1, (r - nowMs) / span) * (x1 - x0));
+            order[i] = i;
+        }
+        java.util.Arrays.sort(order, (a, b) -> xs[a] != xs[b] ? Float.compare(xs[a], xs[b]) : Integer.compare(a, b));
+        for (int j = 1; j < n; j++) xs[order[j]] = Math.max(xs[order[j]], xs[order[j - 1]] + minGap);
+        for (int j = n - 1; j >= 0; j--) {
+            float limit = j == n - 1 ? x1 : xs[order[j + 1]] - minGap;
+            xs[order[j]] = Math.min(xs[order[j]], limit);
+        }
+        for (int j = 0; j < n; j++) xs[order[j]] = Math.round(xs[order[j]] * 1000) / 1000f;
+        return xs;
+    }
+
+    /** The first day of each month after now, up to end (the radar's month marks). */
+    public static long[] monthStarts(long nowMs, long endMs, TimeZone tz) {
+        Calendar c = Calendar.getInstance(tz, Locale.US);
+        c.setTimeInMillis(nowMs);
+        c.set(Calendar.DAY_OF_MONTH, 1);
+        c.set(Calendar.HOUR_OF_DAY, 0);
+        c.set(Calendar.MINUTE, 0);
+        c.set(Calendar.SECOND, 0);
+        c.set(Calendar.MILLISECOND, 0);
+        List<Long> out = new ArrayList<>();
+        for (int i = 0; i < 24; i++) {
+            c.add(Calendar.MONTH, 1);
+            if (c.getTimeInMillis() > endMs) break;
+            out.add(c.getTimeInMillis());
+        }
+        long[] a = new long[out.size()];
+        for (int i = 0; i < a.length; i++) a[i] = out.get(i);
+        return a;
+    }
+
+    /** "NOV". */
+    public static String monthLabel(long ms, TimeZone tz) {
+        Calendar c = Calendar.getInstance(tz, Locale.US);
+        c.setTimeInMillis(ms);
+        return MONTHS[c.get(Calendar.MONTH)];
+    }
+
+    /** A focused poster's line: 2 platforms · genre · ★players' average (0–5, from 5 ratings): "PS5 · PC · Action · ★4.6". */
+    public static String meta(String platforms, String genre, float rating, int ratings) {
+        List<String> out = new ArrayList<>();
+        if (platforms != null) for (String p : platforms.split("·")) {
+            if (!p.trim().isEmpty() && out.size() < 2) out.add(p.trim());
+        }
+        if (genre != null && !genre.trim().isEmpty()) out.add(genre.trim());
+        if (ratings >= 5 && rating > 0 && rating <= 5) out.add(String.format(Locale.US, "★%.1f", rating));
+        return String.join(" · ", out);
+    }
+
+    /** "12.4K people want it" (RAWG's added count); "" under 50. */
+    public static String wantIt(int added) {
+        if (added < 50) return "";
+        String n = added >= 1_000_000 ? String.format(Locale.US, "%.1fM", added / 1_000_000f).replace(".0M", "M")
+                : added >= 1_000 ? String.format(Locale.US, "%.1fK", added / 1_000f).replace(".0K", "K") : String.valueOf(added);
+        return n + " people want it";
+    }
+
+    /** The gold ring's score: OpenCritic's, else Metacritic's (1–100); 0: no ring. */
+    public static int score(int openCritic, int meta) {
+        if (openCritic > 0 && openCritic <= 100) return openCritic;
+        return meta > 0 && meta <= 100 ? meta : 0;
+    }
+}
