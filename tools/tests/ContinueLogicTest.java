@@ -1,5 +1,5 @@
-import io.freemytv.ContinueLogic;
-import io.freemytv.ContinueLogic.Entry;
+import io.ibtzy.tvlauncher.ContinueLogic;
+import io.ibtzy.tvlauncher.ContinueLogic.Entry;
 import java.util.*;
 
 /** Tests for Home's Continue row (no Android): run by tools/tests/run.sh. */

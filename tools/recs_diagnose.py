@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Free My TV: why are Home's titles old?  Read-only. Runs the same TMDB requests as Recs.fetchList (same filters, same
+ibtzy TV Launcher: why are Home's titles old?  Read-only. Runs the same TMDB requests as Recs.fetchList (same filters, same
 order), applies the same checks as tabPool/tabShown/homeShown, and prints every title with its date and the step it
 came from. Then looks up some titles that Netflix/Prime Video Pakistan show right now, to see what TMDB knows of them.
 

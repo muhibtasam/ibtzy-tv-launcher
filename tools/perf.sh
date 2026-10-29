@@ -3,7 +3,7 @@
 # "s" = 1 s pause), then prints frame timing from dumpsys gfxinfo framestats: frames, janky share and median / p90 of
 # the whole frame, the UI thread's draw (onDraw recording) and the render thread (sync + GPU issue + swap), in ms.
 TV=${TV:-192.168.1.69:5555}; A="adb -s $TV"
-PID=$($A shell pidof io.freemytv:home | tr -d '\r')
+PID=$($A shell pidof io.ibtzy.tvlauncher:home | tr -d '\r')
 $A shell dumpsys gfxinfo "$PID" reset >/dev/null
 for k in $1; do if [ "$k" = s ]; then sleep 1; else $A shell input keyevent "$k"; sleep 0.25; fi; done
 sleep 1
