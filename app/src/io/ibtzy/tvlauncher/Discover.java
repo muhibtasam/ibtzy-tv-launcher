@@ -60,6 +60,9 @@ final class Discover {
         // Games (Games.java; kind "game"): their platforms and genre, the Metascore RAWG lists (0: none), how many
         // RAWG users added it (its popularity).
         String platforms = "", genres = "";
+        // Movies and shows (Movies V1): TMDB's overview and average (0–10, 0: none); genres above, short ("Sci-fi · Drama").
+        String overview = "";
+        float vote;
         int score, added;
         String shots = "";      // games: up to 5 screenshot addresses, one per line (the hero's strip)
         String hero = "", logo = "";   // featured games: SteamGridDB's top hero (key art) and logo (transparent PNG)
@@ -89,6 +92,7 @@ final class Discover {
     static final String TRENDING = "trending", SEARCHES = "searches", UPCOMING = "upcoming", ANTICIPATED = "anticipated";
     private static final long TTL = 6 * 3600_000L, RETRY = 15 * 60_000L;
     private static final int VERSION = 1;
+    private static final int DETAILS = 2;   // titles carry genres, rating and description (Movies V1)
     private static final String API = "https://api.themoviedb.org/3", IMG = "https://image.tmdb.org/t/p/";
 
     private static Discover instance;
@@ -115,7 +119,8 @@ final class Discover {
                 JSONObject o = new JSONObject(read(new FileInputStream(f)));
                 if (o.optInt("version") == VERSION && o.optString("region").equals(Recs.REGION)) {
                     rows = parse(o.getJSONArray("rows"));
-                    fetchedAt = o.optLong("at");
+                    // Saved before titles kept their genres, rating and description: shown now, fetched again at once.
+                    fetchedAt = o.optInt("details") >= DETAILS ? o.optLong("at") : 0;
                 }
             }
         } catch (Exception ignored) {
@@ -256,7 +261,7 @@ final class Discover {
 
     /** Movies and series coming out in the next 120 days, by TMDB's current popularity, alternating. */
     private Row upcomingRow() throws Exception {
-        Row r = row(UPCOMING, Ui.tr("Upcoming"));
+        Row r = row(UPCOMING, Ui.tr("Coming soon"));
         String from = Recs.day(1), to = Recs.day(120);
         JSONArray movies = tmdb("/discover/movie?language=en-US&include_adult=false&sort_by=popularity.desc"
                 + "&primary_release_date.gte=" + from + "&primary_release_date.lte=" + to).getJSONArray("results");
@@ -343,7 +348,17 @@ final class Discover {
         if (t.date.isEmpty()) t.date = clean(d.optString("movie".equals(t.kind) ? "release_date" : "first_air_date"));
         JSONArray genres = d.optJSONArray("genres");
         boolean animation = false;
-        for (int i = 0; genres != null && i < genres.length(); i++) animation |= genres.optJSONObject(i).optInt("id") == 16;
+        String[] names = new String[genres == null ? 0 : genres.length()];
+        for (int i = 0; genres != null && i < genres.length(); i++) {
+            JSONObject g = genres.optJSONObject(i);
+            if (g == null) continue;
+            animation |= g.optInt("id") == 16;
+            names[i] = g.optString("name", "");
+        }
+        t.genres = MoviesLogic.genres(names);
+        t.overview = MoviesLogic.description(d.optString("overview", ""));
+        double vote = d.optDouble("vote_average", 0);
+        t.vote = Double.isNaN(vote) ? 0 : (float) vote;
         t.anime = animation && "ja".equals(d.optString("original_language"));
         JSONObject results = d.optJSONObject("watch/providers") == null ? null : d.optJSONObject("watch/providers").optJSONObject("results");
         List<String> apps = services(results, Recs.REGION);
@@ -445,11 +460,12 @@ final class Discover {
                 for (Title t : r.items) {
                     items.put(new JSONObject().put("id", t.id).put("kind", t.kind).put("title", t.title)
                             .put("backdrop", t.backdrop).put("poster", t.poster).put("date", t.date).put("anime", t.anime)
-                            .put("app", t.app == null ? "" : t.app).put("more", t.moreApps).put("cinema", t.cinema));
+                            .put("app", t.app == null ? "" : t.app).put("more", t.moreApps).put("cinema", t.cinema)
+                            .put("genres", t.genres).put("overview", t.overview).put("vote", t.vote));
                 }
                 a.put(new JSONObject().put("key", r.key).put("name", r.name).put("items", items));
             }
-            JSONObject o = new JSONObject().put("version", VERSION).put("region", Recs.REGION).put("at", fetchedAt).put("rows", a);
+            JSONObject o = new JSONObject().put("version", VERSION).put("details", DETAILS).put("region", Recs.REGION).put("at", fetchedAt).put("rows", a);
             try (FileOutputStream out = new FileOutputStream(cacheFile())) {
                 out.write(o.toString().getBytes("UTF-8"));
             }
@@ -462,7 +478,8 @@ final class Discover {
         for (int i = 0; i < a.length(); i++) {
             JSONObject o = a.optJSONObject(i);
             if (o == null) continue;
-            Row r = row(o.optString("key"), o.optString("name"));
+            String key = o.optString("key");
+            Row r = row(key, UPCOMING.equals(key) ? Ui.tr("Coming soon") : o.optString("name"));
             JSONArray items = o.optJSONArray("items");
             for (int j = 0; items != null && j < items.length(); j++) {
                 JSONObject x = items.optJSONObject(j);
@@ -477,6 +494,10 @@ final class Discover {
                 t.app = x.optString("app").isEmpty() ? null : x.optString("app");
                 t.moreApps = x.optInt("more");
                 t.cinema = x.optBoolean("cinema");
+                t.genres = x.optString("genres", "");
+                t.overview = x.optString("overview", "");
+                double vote = x.optDouble("vote", 0);
+                t.vote = Double.isNaN(vote) ? 0 : (float) vote;
                 r.items.add(t);
             }
             if (!r.items.isEmpty()) out.add(r);

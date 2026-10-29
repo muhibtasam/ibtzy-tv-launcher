@@ -3533,6 +3533,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // FEED_LABEL: from a row's top to its cards: the title (~34) plus room for the focused card's growth, rise and rim
     // (up to ~20), so the focus never touches the row's name.
     private static final float FEED_TOP = 214, FEED_LABEL = 68, FEED_ROW_GAP = 50, FEED_GAP = 24, FEED_BOTTOM = 1040;
+    // Movies V1 (For You's movie and show rows): 226 × 340 posters, the focused one 600 × 340 landscape; a serif heading
+    // (40) 16 above the cards; the focused card's description (2 lines of 19) 16 below them; 40 between rows.
+    private static final float MV_W = 226, MV_WIDE = 600, MV_H = 340, MV_LABEL = 64, MV_INFO = 16 + 56, MV_ROW_GAP = 40;
+
+    private static boolean movieRow(String row) {
+        return row != null && !gameRow(row) && !railRow(row);
+    }
+
+    private static float feedLabelH(String row) {
+        return movieRow(row) ? MV_LABEL : FEED_LABEL;
+    }
     // For You's two sections, Movies & Shows | Games: a switch at the page's top (60 high, its rows under it). Focus on
     // it: feedRow -1. Each section's rows have their own keys, so each keeps its own cards' places and springs.
     private static final float SWITCH_H = 60, SWITCH_SPACE = 84;
@@ -3577,16 +3588,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** A card's resting width: tall (poster) cards; the prominent one is as wide as Trending's featured card, in proportion. */
     private static float feedNormalW(String row) {
         if (railRow(row)) return Games.RECENT.equals(row) ? RAIL_NUM + RC_CARD : POP_W;
-        return Discover.TRENDING.equals(row) ? 300 : gameRow(row) ? GAME_W : 176;
+        if (movieRow(row)) return MV_W;
+        return gameRow(row) ? GAME_W : 176;
     }
 
     private static float feedProminentW(String row) {
         if (railRow(row)) return Games.RECENT.equals(row) ? RAIL_NUM + RAIL_WIDE : RAIL_WIDE;
         if (gameRow(row)) return GAME_W;       // game tiles are already wide (16:9): focus grows them instead
+        if (movieRow(row)) return MV_WIDE;
         return feedCardH(row) * 780f / 380f;   // Trending: 780 × 380; the 264-high rows: 542 × 264
     }
 
     private static float feedCardH(String row) {
+        if (movieRow(row)) return MV_H;
         return Discover.TRENDING.equals(row) ? 380 : Games.HERO.equals(row) ? HERO_H : railRow(row) ? RAIL_H
                 : Games.UPCOMING.equals(row) ? CAL_HEAD + CAL_PER * CAL_ROW : gameRow(row) ? GAME_H : 264;
     }
@@ -3600,12 +3614,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** A row's height on the page, its gap included: the hero has no label. */
     private static float feedRowSpan(String row) {
-        return Games.HERO.equals(row) ? HERO_H + HERO_GAP : FEED_LABEL + feedCardH(row) + (railRow(row) ? RAIL_INFO : 0) + FEED_ROW_GAP;
+        return Games.HERO.equals(row) ? HERO_H + HERO_GAP : feedLabelH(row) + feedCardH(row)
+                + (railRow(row) ? RAIL_INFO : movieRow(row) ? MV_INFO : 0) + (movieRow(row) ? MV_ROW_GAP : FEED_ROW_GAP);
     }
 
     /** Where a row's content ends (for scrolling to it): the hero's bottom, or its cards' bottom (+ the rim's room). */
     private static float feedRowEnd(String row, float top) {
-        return Games.HERO.equals(row) ? top + HERO_H : top + FEED_LABEL + feedCardH(row) + (railRow(row) ? RAIL_INFO : 24);
+        return Games.HERO.equals(row) ? top + HERO_H : top + feedLabelH(row) + feedCardH(row) + (railRow(row) ? RAIL_INFO : movieRow(row) ? MV_INFO : 24);
     }
 
     /**
@@ -3625,10 +3640,28 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private float feedRowTop(List<Discover.Row> rows, int r) {
+        return feedRowTop(rows, r, false);
+    }
+
+    /**
+     * A row's top on the page. Movies V1: a movie row has its description's room only while it shows one (the row
+     * with the wide card), opening and closing smoothly (`settled`: as it will be, for scrolling to a row).
+     */
+    private float feedRowTop(List<Discover.Row> rows, int r, boolean settled) {
         float y = FEED_TOP + SWITCH_SPACE;
-        for (int i = 0; i < r && i < rows.size(); i++) y += feedRowSpan(rows.get(i).key);
+        for (int i = 0; i < r && i < rows.size(); i++) {
+            String key = rows.get(i).key;
+            y += feedRowSpan(key);
+            if (movieRow(key)) {
+                Spring sp = feedInfo.get(key);
+                float open = sp == null ? (feedProminent(rows, i) >= 0 ? 1 : 0) : settled ? sp.target : Ui.clamp(sp.value);
+                y -= MV_INFO * (1 - open);
+            }
+        }
         return y;
     }
+
+    private final java.util.HashMap<String, Spring> feedInfo = new java.util.HashMap<>();
 
     private float feedCardX(String row, int i, int prominent) {
         float x = MARGIN;
@@ -3804,8 +3837,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         feedRow = Math.max(0, Math.min(rows.size() - 1, feedRow));
-        float top = feedRowTop(rows, feedRow), bottom = feedRowEnd(rows.get(feedRow).key, top);
-        float end = feedRowEnd(rows.get(rows.size() - 1).key, feedRowTop(rows, rows.size() - 1))
+        retargetFeed(false);   // the rows' description room as it will be once the focus settles
+        float top = feedRowTop(rows, feedRow, true), bottom = feedRowEnd(rows.get(feedRow).key, top);
+        float end = feedRowEnd(rows.get(rows.size() - 1).key, feedRowTop(rows, rows.size() - 1, true))
                 + (gamesOn ? 40 : 0);   // Games: room for RAWG's credit under the last row
         float max = Math.max(0, end - FEED_BOTTOM), y = feedScrollY.target;
         if (top - y < FEED_TOP) y = top - FEED_TOP;              // above the view: up to it
@@ -3865,6 +3899,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int r = 0; r < rows.size(); r++) {
             Discover.Row row = rows.get(r);
             int prominent = feedProminent(rows, r);
+            if (movieRow(row.key)) {   // Movies V1: the description's room, open on the row with the wide card
+                float it = prominent >= 0 ? 1 : 0;
+                Spring info = feedInfo.get(row.key);
+                if (info == null) {
+                    info = new Spring(0.24f, 1f, it);
+                    feedInfo.put(row.key, info);
+                }
+                changed |= info.target != it;
+                info.target = it;
+                if (snap) info.snap(it);
+            }
             for (int i = 0; i < row.items.size(); i++) {
                 Spring sp = feedSpring(feedFocus, row.key + i, 0.24f, 0.85f);
                 float t = on && r == feedRow && i == feedColOf(row.key) ? 1 : 0;
@@ -3894,6 +3939,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         moving |= feedSection.step(dt);
         for (Spring sp : feedFocus.values()) moving |= sp.step(dt);
         for (Spring sp : feedProminence.values()) moving |= sp.step(dt);
+        for (Spring sp : feedInfo.values()) moving |= sp.step(dt);
         for (Spring sp : feedScrollX.values()) moving |= sp.step(dt);
         return moving;
     }
@@ -5471,12 +5517,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             Discover.Row row = rows.get(r);
             float top = feedRowTop(rows, r) - scrollY;
             float cardH = feedCardH(row.key);
-            if ((top + FEED_LABEL + cardH + 40) * k < 200 * k || top * k > h) continue;
+            float label = feedLabelH(row.key);
+            if ((top + label + cardH + 40 + (movieRow(row.key) ? MV_INFO : 0)) * k < 200 * k || top * k > h) continue;
             if (Games.HERO.equals(row.key)) {
                 drawBento(c, row, top);
                 continue;
             }
-            c.drawText(row.name, MARGIN * k, (top + 30) * k, feedLabel);
+            if (movieRow(row.key)) drawMovieHeading(c, row.name, top);
+            else c.drawText(row.name, MARGIN * k, (top + 30) * k, feedLabel);
             if (railRow(row.key)) {
                 drawRail(c, row, top + FEED_LABEL, r == focusedRow);
                 continue;
@@ -5503,16 +5551,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             for (int i = 0; i < row.items.size(); i++) {
                 if (i == focusedCol) continue;
-                drawFeedCard(c, row, i, xs[i], ws[i], top + FEED_LABEL);
+                drawFeedCard(c, row, i, xs[i], ws[i], top + label);
             }
             if (focusedCol >= 0 && focusedCol < row.items.size()) {
-                drawFeedCard(c, row, focusedCol, xs[focusedCol], ws[focusedCol], top + FEED_LABEL);
+                drawFeedCard(c, row, focusedCol, xs[focusedCol], ws[focusedCol], top + label);
                 feedFocused.set(cell);
+            }
+            // Movies V1: the wide card's description under it, as in Games (it fades in as the card widens).
+            if (movieRow(row.key) && prominent >= 0 && prominent < row.items.size()) {
+                drawMovieInfo(c, row.items.get(prominent), xs[prominent], top + label + cardH, Ui.clamp(feedProm(row.key, prominent, 1).value));
             }
         }
         if (gamesOn) {   // RAWG's free plan: a credit where its data shows
             Discover.Row last = rows.get(rows.size() - 1);
-            float y = feedRowTop(rows, rows.size() - 1) + FEED_LABEL + feedCardH(last.key) + 44 - scrollY;
+            float y = feedRowTop(rows, rows.size() - 1) + feedLabelH(last.key) + feedCardH(last.key) + 44 - scrollY;
             feedMeta.setAlpha(150);
             // (no source names on the Games page, by the owner's choice)
             feedMeta.setAlpha(255);
@@ -5673,10 +5725,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         c.restore();
         float pad = (W > 400 * k ? 30 : 18) * k, left = -W / 2 + pad, bottom = H / 2 - pad;
-        boolean trending = Discover.TRENDING.equals(row.key);
+        boolean trending = Discover.TRENDING.equals(row.key), movie = movieRow(row.key);
+        if (movie) drawMovieCardText(c, t, i, trending, W, H, pr);
         // Text: the wide layout (big title; Trending also its big rank and the kind) and the tall one, crossfading.
         int wideA = Math.round(255 * pr), tallA = Math.round(255 * (1 - pr));
-        if (wideA > 2) {
+        if (!movie && wideA > 2) {
             float tx = left;
             if (trending) {
                 String rank = String.valueOf(i + 1);
@@ -5703,7 +5756,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             feedChip.setAlpha(190);
             c.drawText(feedFit(meta, feedChip, room), left, bottom, feedChip);
             feedChip.setAlpha(255);
-        } else if (tallA > 2) {
+        } else if (!movie && tallA > 2) {
             feedTitle.setAlpha(tallA);
             float room = feedNormalW(row.key) * k - 2 * pad;
             if (trending) {
@@ -5719,21 +5772,32 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!badge.isEmpty()) {
             String date = badge;
             float cw = feedChip.measureText(date) + 54 * k, ch = 34 * k, tx = -W / 2 + 14 * k, ty = -H / 2 + 14 * k;
-            glassTmp.set(tx, ty, tx + cw, ty + ch);
             fill.setShader(null);
-            fill.setColor(0xAA141416);
-            c.drawRoundRect(glassTmp, ch / 2, ch / 2, fill);
-            border.setColor(0x29FFFFFF);
-            border.setStrokeWidth(1 * k);
-            c.drawRoundRect(glassTmp, ch / 2, ch / 2, border);
-            border.setStrokeWidth(2 * k);
-            Symbols.draw(getContext(), c, game && Games.POPULAR.equals(row.key) ? "sparkles" : "event", tx + 22 * k, ty + ch / 2, 18 * k, accent(0.95f));
-            c.drawText(date, tx + 38 * k, ty + ch / 2 + Ui.halfCap(feedChip), feedChip);
+            if (!movie) {
+                glassTmp.set(tx, ty, tx + cw, ty + ch);
+                fill.setColor(0xAA141416);
+                c.drawRoundRect(glassTmp, ch / 2, ch / 2, fill);
+                border.setColor(0x29FFFFFF);
+                border.setStrokeWidth(1 * k);
+                c.drawRoundRect(glassTmp, ch / 2, ch / 2, border);
+                border.setStrokeWidth(2 * k);
+            }
+            if (movie) {   // Movies V1: the date alone in a dark pill
+                glassTmp.set(tx, ty, tx + feedChip.measureText(date) + 24 * k, ty + ch);
+                fill.setColor(0xBF0E0A0B);
+                c.drawRoundRect(glassTmp, ch / 2, ch / 2, fill);
+                c.drawText(date, tx + 12 * k, ty + ch / 2 + Ui.halfCap(feedChip), feedChip);
+            } else {
+                Symbols.draw(getContext(), c, game && Games.POPULAR.equals(row.key) ? "sparkles" : "event", tx + 22 * k, ty + ch / 2, 18 * k, accent(0.95f));
+                c.drawText(date, tx + 38 * k, ty + ch / 2 + Ui.halfCap(feedChip), feedChip);
+            }
         }
         // Top right: where it is (an indicator only).
         float bs = (W > 250 * k ? 40 : 34) * k, bx = W / 2 - 12 * k - bs, by = -H / 2 + 12 * k;
         Bitmap service = t.app == null || "other".equals(t.app) ? null : HomeApps.serviceArt(getContext(), t.app);
-        if (service != null) {
+        if (service != null && movie) {   // Movies V1: the app's round 3D icon, as on Home
+            drawRoundIcon(c, service, W / 2 - 16 * k - 40 * k, -H / 2 + 16 * k, 40 * k);
+        } else if (service != null) {
             glassTmp.set(bx, by, bx + bs, by + bs);
             roundImage(c, service, glassTmp, bs * 0.23f);
         } else if (t.app != null || t.cinema) {
@@ -5758,16 +5822,121 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawText(more, bx - 8 * k - feedChip.measureText(more), by + bs / 2 + Ui.halfCap(feedChip), feedChip);
         }
         if (fc > 0.01f) {
-            float g = 6 * k / s;
+            float g = (movie ? 4.5f : 6) * k / s;   // Movies V1: Home's ring, ivory, 3 px out
             glassTmp.set(-W / 2 - g, -H / 2 - g, W / 2 + g, H / 2 + g);
             // Can't be opened here: the same rim, quieter (a subtle hint, not an overlay); OK does nothing on it.
-            float strength = "game".equals(t.kind) || titleLaunchable(t.kind, t.id, t.app) ? 0.9f : 0.4f;
-            border.setColor(Ui.alpha(0xFFFFFFFF, strength * fc));
+            float strength = "game".equals(t.kind) || titleLaunchable(t.kind, t.id, t.app) ? (movie ? 1 : 0.9f) : 0.4f;
+            border.setColor(Ui.alpha(movie ? ACCENT : 0xFFFFFFFF, strength * fc));
             border.setStrokeWidth(3 * k / s);
             c.drawRoundRect(glassTmp, r0 + g, r0 + g, border);
             border.setStrokeWidth(2 * k);
         }
         c.restore();
+    }
+
+    // MARK: - Movies V1 (For You's movie and show rows)
+
+    private Paint mvHead, mvHeadIt, mvRankBig, mvRank;
+    private TextPaint mvTitle, mvMeta, mvSmall, mvDesc;
+    private final java.util.HashMap<String, String[]> mvTexts = new java.util.HashMap<>();   // measured once per text
+
+    private void mvPaints() {
+        if (mvHead != null) return;
+        mvHead = Ui.text(Ui.displaySemibold, 40 * k, 0xFFFFFFFF);
+        mvHeadIt = Ui.text(Ui.displayItalic, 40 * k, 0xD9FFFFFF);
+        mvRankBig = Ui.text(Ui.displaySemibold, 120 * k, 0xFFFFFFFF);
+        mvRank = Ui.text(Ui.displaySemibold, 64 * k, 0xFFFFFFFF);
+        mvTitle = new TextPaint(Ui.text(Ui.displaySemibold, 36 * k, 0xFFFFFFFF));
+        mvMeta = new TextPaint(Ui.text(Ui.medium, 17 * k, 0xD9FFFFFF));
+        mvSmall = new TextPaint(Ui.text(Ui.semibold, 18 * k, 0xFFFFFFFF));
+        mvDesc = new TextPaint(Ui.text(Ui.regular, 19 * k, 0xCCFFFFFF));
+        for (Paint p : new Paint[] {mvHead, mvHeadIt, mvRankBig, mvRank, mvTitle, mvMeta, mvSmall, mvDesc}) p.setColorFilter(IVORY_TEXT);
+    }
+
+    /** A text cut into at most `lines` lines of `room` px (cached: never measured on every frame). */
+    private String[] mvWrap(String text, TextPaint p, float room, int lines) {
+        String key = Math.round(p.getTextSize()) + "|" + Math.round(room) + "|" + lines + "|" + text;
+        String[] out = mvTexts.get(key);
+        if (out == null) {
+            if (mvTexts.size() > 400) mvTexts.clear();
+            out = TitleWrap.wrap(text, room, p::measureText, lines);
+            mvTexts.put(key, out);
+        }
+        return out;
+    }
+
+    /** A row's heading: an ivory accent line, then its first word upright and the rest italic ("Trending *this week*"). */
+    private void drawMovieHeading(Canvas c, String name, float top) {
+        mvPaints();
+        String[] parts = mvTexts.get("head|" + name);
+        if (parts == null) {
+            String[] h = MoviesLogic.heading(name);
+            parts = new String[] {h[0], h[1], String.valueOf(mvHead.measureText(h[0] + " "))};
+            mvTexts.put("head|" + name, parts);
+        }
+        float base = (top + 38) * k, x = MARGIN * k, cy = base - Ui.halfCap(mvHead);
+        fill.setShader(null);
+        fill.setColor(ACCENT);
+        c.drawRoundRect(x, cy - 2 * k, x + 48 * k, cy + 2 * k, 2 * k, 2 * k, fill);
+        x += 64 * k;
+        c.drawText(parts[0], x, base, mvHead);
+        if (!parts[1].isEmpty()) c.drawText(parts[1], x + Float.parseFloat(parts[2]), base, mvHeadIt);
+    }
+
+    /**
+     * A movie card's text (card-centred coordinates). Wide (focused): Trending's big rank, the title in the serif face
+     * (2 lines at most), "Genre · Genre · ★7.6"; tall: Trending's rank and the title on one line. They crossfade with pr.
+     */
+    private void drawMovieCardText(Canvas c, Discover.Title t, int i, boolean trending, float W, float H, float pr) {
+        mvPaints();
+        int wideA = Math.round(255 * pr), tallA = Math.round(255 * (1 - pr));
+        if (wideA > 2) {
+            float left = -W / 2 + 24 * k, right = W / 2 - 24 * k, bottom = H / 2 - 20 * k, tx = left;
+            if (trending) {
+                String rank = String.valueOf(i + 1);
+                mvRankBig.setAlpha(wideA);
+                c.drawText(rank, left, bottom, mvRankBig);
+                mvRankBig.setAlpha(255);
+                tx = left + mvRankBig.measureText(rank) + 20 * k;
+            }
+            float room = Math.max(0, right - tx);
+            String meta = MoviesLogic.rating(t.vote);
+            meta = t.genres.isEmpty() ? (meta.isEmpty() ? "" : "\u2605" + meta) : meta.isEmpty() ? t.genres : t.genres + " \u00B7 \u2605" + meta;
+            float titleBase = bottom;
+            if (!meta.isEmpty()) {
+                mvMeta.setAlpha(Math.round(wideA * 0.85f));
+                drawMetaLine(c, meta, tx, bottom, mvMeta, room, pr);
+                mvMeta.setAlpha(255);
+                titleBase = bottom - 17 * k - 10 * k;
+            }
+            String[] lines = mvWrap(t.title, mvTitle, room, 2);
+            float lineH = 36 * 1.05f * k;
+            mvTitle.setAlpha(wideA);
+            for (int n = 0; n < lines.length; n++) c.drawText(lines[n], tx, titleBase - (lines.length - 1 - n) * lineH, mvTitle);
+            mvTitle.setAlpha(255);
+        }
+        if (tallA > 2) {
+            float left = -W / 2 + 16 * k, bottom = H / 2 - 14 * k, room = (MV_W - 32) * k;
+            if (trending) {
+                mvRank.setAlpha(tallA);
+                c.drawText(String.valueOf(i + 1), left, H / 2 - 44 * k, mvRank);
+                mvRank.setAlpha(255);
+            }
+            mvSmall.setAlpha(tallA);
+            c.drawText(mvWrap(t.title, mvSmall, room, 1)[0], left, bottom, mvSmall);
+            mvSmall.setAlpha(255);
+        }
+    }
+
+    /** Under the wide card: its description, 2 lines at most at the card's width (nothing when TMDB has none). */
+    private void drawMovieInfo(Canvas c, Discover.Title t, float x, float cardsBottom, float a) {
+        if (a < 0.02f || t.overview.isEmpty()) return;
+        mvPaints();
+        String[] lines = mvWrap(t.overview, mvDesc, MV_WIDE * k, 2);
+        mvDesc.setAlpha(Math.round(204 * a));
+        float lineH = 19 * 1.45f;
+        for (int n = 0; n < lines.length; n++) c.drawText(lines[n], x * k, (cardsBottom + 16 + 20 + n * lineH) * k, mvDesc);
+        mvDesc.setAlpha(255);
     }
 
     /** `b` into `dst` like CSS object-fit: cover (centred; cut, never stretched), at `alpha`. */
@@ -5796,10 +5965,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float x = MARGIN, ch = feedCardH(key);
             for (int i = 0; x < CONTENT_R; i++) {
                 float cw = feedCardW(key, i, Discover.TRENDING.equals(key) || railRow(key) ? 0 : -1);
-                c.drawRoundRect(x * k, (y + FEED_LABEL) * k, Math.min(x + cw, CONTENT_R) * k, (y + FEED_LABEL + ch) * k, 20 * k, 20 * k, fill);
+                float lab = feedLabelH(key);
+                c.drawRoundRect(x * k, (y + lab) * k, Math.min(x + cw, CONTENT_R) * k, (y + lab + ch) * k, 20 * k, 20 * k, fill);
                 x += cw + FEED_GAP;
             }
-            y += FEED_LABEL + ch + (railRow(key) ? RAIL_INFO : 0) + FEED_ROW_GAP;
+            y += feedRowSpan(key);
         }
     }
 
