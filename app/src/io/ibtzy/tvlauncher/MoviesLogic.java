@@ -43,6 +43,28 @@ public final class MoviesLogic {
         return overview == null ? "" : overview.trim().replaceAll("\\s+", " ");
     }
 
+    /**
+     * The description under a focused card: as many whole sentences as fit in maxLines lines of maxW, never "…".
+     * A first sentence longer than that is cut at the last word that fits.
+     */
+    public static String[] descriptionLines(String overview, float maxW, java.util.function.ToDoubleFunction<String> width, int maxLines) {
+        String text = description(overview);
+        if (text.isEmpty() || maxW <= 0 || maxLines < 1) return new String[0];
+        String[] sentences = text.split("(?<=[.!?\u2026])\\s+");
+        String[] best = null;
+        StringBuilder sb = new StringBuilder();
+        for (String sentence : sentences) {
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(sentence);
+            String[] lines = TitleWrap.wrap(sb.toString(), maxW, width, Integer.MAX_VALUE);
+            if (lines.length > maxLines) break;
+            best = lines;
+        }
+        if (best != null) return best;
+        String[] lines = TitleWrap.wrap(sentences[0], maxW, width, Integer.MAX_VALUE);
+        return java.util.Arrays.copyOf(lines, Math.min(maxLines, lines.length));
+    }
+
     /** A row's heading in two parts: its first word (upright) and the rest (italic). */
     public static String[] heading(String name) {
         String n = name == null ? "" : name.trim().replaceAll("\\s+", " ");

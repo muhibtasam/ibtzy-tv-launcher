@@ -3534,8 +3534,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // (up to ~20), so the focus never touches the row's name.
     private static final float FEED_TOP = 214, FEED_LABEL = 68, FEED_ROW_GAP = 50, FEED_GAP = 24, FEED_BOTTOM = 1040;
     // Movies V1 (For You's movie and show rows): 226 × 340 posters, the focused one 600 × 340 landscape; a serif heading
-    // (40) 16 above the cards; the focused card's description (2 lines of 19) 16 below them; 40 between rows.
-    private static final float MV_W = 226, MV_WIDE = 600, MV_H = 340, MV_LABEL = 64, MV_INFO = 16 + 56, MV_ROW_GAP = 40;
+    // (40) 16 above the cards; the focused card's description (whole sentences, 3 lines of 19 at most) 24 below them,
+    // clear of the focus ring; 40 between rows.
+    private static final float MV_W = 226, MV_WIDE = 600, MV_H = 340, MV_LABEL = 64, MV_DESC_GAP = 24, MV_DESC_LINE = 19 * 1.45f,
+            MV_INFO = MV_DESC_GAP + 3 * MV_DESC_LINE + 4, MV_ROW_GAP = 40;
 
     private static boolean movieRow(String row) {
         return row != null && !gameRow(row) && !railRow(row);
@@ -5928,14 +5930,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-    /** Under the wide card: its description, 2 lines at most at the card's width (nothing when TMDB has none). */
+    /** Under the wide card: its description, whole sentences in 3 lines at most, never "…" (nothing when TMDB has none). */
     private void drawMovieInfo(Canvas c, Discover.Title t, float x, float cardsBottom, float a) {
         if (a < 0.02f || t.overview.isEmpty()) return;
         mvPaints();
-        String[] lines = mvWrap(t.overview, mvDesc, MV_WIDE * k, 2);
+        String key = "desc|" + t.kind + t.id;
+        String[] lines = mvTexts.get(key);
+        if (lines == null) {   // measured once per title
+            if (mvTexts.size() > 400) mvTexts.clear();
+            lines = MoviesLogic.descriptionLines(t.overview, MV_WIDE * k, mvDesc::measureText, 3);
+            mvTexts.put(key, lines);
+        }
         mvDesc.setAlpha(Math.round(204 * a));
-        float lineH = 19 * 1.45f;
-        for (int n = 0; n < lines.length; n++) c.drawText(lines[n], x * k, (cardsBottom + 16 + 20 + n * lineH) * k, mvDesc);
+        for (int n = 0; n < lines.length; n++) c.drawText(lines[n], x * k, (cardsBottom + MV_DESC_GAP + 19 + n * MV_DESC_LINE) * k, mvDesc);
         mvDesc.setAlpha(255);
     }
 

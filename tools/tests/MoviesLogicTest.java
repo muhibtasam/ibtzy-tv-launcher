@@ -39,6 +39,21 @@ public class MoviesLogicTest {
         check("heading spaces", MoviesLogic.heading("  Most   anticipated "), new String[] {"Most", "anticipated"});
         check("empty heading", MoviesLogic.heading(null), new String[] {"", ""});
 
+        // Description lines: whole sentences in at most 3 lines, never "…"; a first sentence too long is cut at a word.
+        java.util.function.ToDoubleFunction<String> w = String::length;   // 1 unit per character
+        check("all fits", MoviesLogic.descriptionLines("A thief. In Paris.", 20, w, 3), new String[] {"A thief. In Paris."});
+        check("drops the sentence that doesn't fit",
+                MoviesLogic.descriptionLines("One two three. Four five six. Seven eight nine ten eleven.", 15, w, 3),
+                new String[] {"One two three.", "Four five six."});
+        check("long first sentence: cut at a word, no …",
+                MoviesLogic.descriptionLines("aaaa bbbb cccc dddd eeee ffff gggg", 9, w, 3), new String[] {"aaaa bbbb", "cccc dddd", "eeee ffff"});
+        check("ends with ! and ?", MoviesLogic.descriptionLines("Run! Why? Because.", 10, w, 3), new String[] {"Run! Why?", "Because."});
+        check("empty", MoviesLogic.descriptionLines("", 10, w, 3), new String[0]);
+        check("null", MoviesLogic.descriptionLines(null, 10, w, 3), new String[0]);
+        check("spaces collapsed", MoviesLogic.descriptionLines("  Hi.\n\n Bye. ", 10, w, 3), new String[] {"Hi. Bye."});
+        check("no room", MoviesLogic.descriptionLines("Hi.", 0, w, 3), new String[0]);
+        check("never an ellipsis", String.join("|", MoviesLogic.descriptionLines("Word word word word word word word word word word.", 10, w, 3)).contains("\u2026"), false);
+
         if (failed > 0) { System.out.println("MoviesLogicTest: " + failed + " failed"); System.exit(1); }
         System.out.println("MoviesLogicTest: all passed");
     }
