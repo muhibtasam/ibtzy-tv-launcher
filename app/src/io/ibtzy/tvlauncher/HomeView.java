@@ -129,7 +129,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
     // Even margins: "For You" (its capitals) and the round buttons start 44 from the top, as the dock's glass ends 44
     // from the bottom (DOCK_BOTTOM 1036). Then the tabs, then the grid, which grows down to just above the dock.
-    private static final float L_TITLE_BASE = 88, L_TABBAR_TOP = 118, L_TABBAR_H = 68, L_CARDS_TOP = 262, L_CARD_H = 442;
+    private static final float L_TITLE_BASE = 88, L_TABBAR_TOP = 118, L_TABBAR_H = 72, L_CARDS_TOP = 262, L_CARD_H = 442;
     private static final float L_TALL_W = 320, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 78;
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
@@ -1130,7 +1130,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (reorderAnim) tilesMoving |= stepReorder(dt, up);
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
-        boolean topMoving = step(topFocus, dt), cardsMoving = step(cardFocus, dt) | stepFeed(dt);
+        boolean topMoving = step(topFocus, dt) | stepTabs(dt), cardsMoving = step(cardFocus, dt) | stepFeed(dt);
         boolean dimMoving = exploreDim.step(dt);
         if (dimMoving) sky.invalidate();
         boolean skeleton = bento() && ((cards.size() <= contShown && recs.listLoading()) || cardsWaiting());
@@ -3532,7 +3532,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // FEED_TOP, and each row slides sideways to keep its focused card whole.
     // FEED_LABEL: from a row's top to its cards: the title (~34) plus room for the focused card's growth, rise and rim
     // (up to ~20), so the focus never touches the row's name.
-    private static final float FEED_TOP = 214, FEED_LABEL = 68, FEED_ROW_GAP = 50, FEED_GAP = 24, FEED_BOTTOM = 1040;
+    private static final float FEED_TOP = 230, FEED_LABEL = 68, FEED_ROW_GAP = 50, FEED_GAP = 24, FEED_BOTTOM = 1040;
     // Movies V1 (For You's movie and show rows): 226 × 340 posters, the focused one 600 × 340 landscape; a serif heading
     // (40) 16 above the cards; the focused card's description (whole sentences, 3 lines of 19 at most) 24 below them,
     // clear of the focus ring; 40 between rows.
@@ -3548,12 +3548,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
     // For You's two sections, Movies & Shows | Games: a switch at the page's top (60 high, its rows under it). Focus on
     // it: feedRow -1. Each section's rows have their own keys, so each keeps its own cards' places and springs.
-    private static final float SWITCH_H = 60, SWITCH_SPACE = 84;
+    private static final float SWITCH_H = 72, SWITCH_SPACE = 72 + 40;   // Tabs V1: the 72 px sub tabs, 40 above the rows
     private boolean gamesOn;
     private final Spring feedSwitchFocus = new Spring(0.26f, 0.85f, 0);
     private final Spring feedSection = new Spring(0.24f, 1f, 1);   // the rows fading in after a switch
     private final RectF feedSegRect = new RectF();
-    private Paint feedSeg, feedSegOn;
     private int feedRow;
 
     /** The rows of the section shown: Movies & Shows (Discover) or Games. */
@@ -3566,6 +3565,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (games == gamesOn) return;
         if (gameSheet != null) closeGameSheet();
         gamesOn = games;
+        feedSwitchedAt = SystemClock.uptimeMillis();   // Tabs V1: the new section's icon plays
         feedSection.snap(0);
         feedSection.target = 1;
         feedScrollY.snap(0);
@@ -3942,6 +3942,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (Spring sp : feedFocus.values()) moving |= sp.step(dt);
         for (Spring sp : feedProminence.values()) moving |= sp.step(dt);
         for (Spring sp : feedInfo.values()) moving |= sp.step(dt);
+        moving |= subIconsPlaying();   // Tabs V1: the sub tabs' icons, only while they play
         for (Spring sp : feedScrollX.values()) moving |= sp.step(dt);
         return moving;
     }
@@ -5575,80 +5576,80 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.restore();
     }
 
-    /**
-     * For You's switch, Movies & Shows | Games: a glass capsule at the page's top; the section shown keeps a glass pill
-     * (its own state, not focus), and with the remote on the switch it becomes the accent pill with dark text, as the
-     * main tabs do.
-     */
-    private Bitmap[] feedSwitchArt;
-    private Paint feedSegEmoji;
+    // MARK: - Tabs V1: the sub tabs (Pedestal Tiles): icon only, 72 px, the section shown in ivory glass with a warm
+    // light under it; the remote on them: lifts 8, grows 5 %, ivory ring, and its icon plays.
 
-    /** The switch's 3D emoji (Fluent, fetched once into assets by tools/fetch_emojis.sh), read once; null: not there. */
-    private Bitmap feedSwitchIcon(int i) {
-        if (feedSwitchArt == null) {
-            feedSwitchArt = new Bitmap[2];
-            String[] names = {"popcorn", "controller"};
-            for (int n = 0; n < 2; n++) {
-                try (java.io.InputStream in = getContext().getAssets().open("emoji/" + names[n] + ".png")) {
-                    feedSwitchArt[n] = android.graphics.BitmapFactory.decodeStream(in);
-                } catch (java.io.IOException ignored) {
-                }
-            }
-        }
-        return feedSwitchArt[i];
+    private long feedSwitchedAt, feedPlayFrom;
+    private boolean feedWasPlaying;
+    private LinearGradient subIvory, subGraphite;
+    private android.graphics.RadialGradient subGlow;
+    private final Matrix subM = new Matrix();
+
+    private boolean subIconsPlaying() {
+        if (tab != FOR_YOU_TAB || sheetOpen || feedScrollY.value > FEED_TOP) return false;
+        return TabsLogic.playing(feedSwitchFocus.target > 0.5f, feedSwitchedAt, SystemClock.uptimeMillis());
     }
 
     private void drawFeedSwitch(Canvas c, float scrollY) {
-        if (feedSeg == null) {
-            feedSeg = Ui.text(Ui.medium, 21 * k, 0x9EFFFFFF);
-            feedSegOn = Ui.text(Ui.semibold, 21 * k, 0xFFFFFFFF);
-            feedSeg.setColorFilter(IVORY_TEXT);
-            feedSegOn.setColorFilter(IVORY_TEXT);
+        float top = (FEED_TOP - scrollY) * k, t = TabsLogic.TILE * k, gap = 16 * k;
+        if (top + t + 24 * k < 200 * k) return;   // scrolled away with the page
+        if (subIvory == null) {
+            subIvory = new LinearGradient(0, 0, 0, 1, 0x38FFF8EC, 0x0FFFF8EC, Shader.TileMode.CLAMP);
+            subGraphite = new LinearGradient(0, 0, 0.36f, 1, 0xFF2E2C2A, 0xFF141312, Shader.TileMode.CLAMP);
+            subGlow = new android.graphics.RadialGradient(0.5f, 0.5f, 0.5f, 0x8CFFE2AA, 0x00FFE2AA, Shader.TileMode.CLAMP);
         }
-        float top = (FEED_TOP - scrollY) * k, hh = SWITCH_H * k, pad = 4 * k, segPad = 24 * k;
-        if (top + hh < 200 * k) return;   // scrolled away with the page
-        String[] names = {Ui.tr("Movies & Shows"), Ui.tr("Games")};
-        // Icons only (the names stay for TalkBack's sake in `names`): popcorn, a controller, 3D, centred in equal pills.
-        float icon = 42 * k;   // 36 → 42 (+6); the pills keep their 36-based width
-        float w0 = 36 * k + 2 * segPad, w1 = w0;
-        float left = MARGIN * k;
-        glassTmp.set(left, top, left + w0 + w1 + 3 * pad, top + hh);
-        fill.setShader(null);
-        fill.setColor(0x14FFFFFF);
-        c.drawRoundRect(glassTmp, hh / 2, hh / 2, fill);
-        border.setColor(0x29FFFFFF);
-        border.setStrokeWidth(1 * k);
-        c.drawRoundRect(glassTmp, hh / 2, hh / 2, border);
-        border.setStrokeWidth(2 * k);
-        float focus = Ui.clamp(feedSwitchFocus.value), x = left + pad;
+        float focus = Ui.clamp(feedSwitchFocus.value);
+        long now = SystemClock.uptimeMillis();
+        boolean play = subIconsPlaying();
+        if (play && !feedWasPlaying) feedPlayFrom = now;   // each play starts at the icon's rest
+        feedWasPlaying = play;
+        float time = play ? (now - feedPlayFrom) / 1000f : Float.NaN;
         for (int i = 0; i < 2; i++) {
             boolean selected = (i == 1) == gamesOn;
-            float sw = i == 0 ? w0 : w1;
-            feedSegRect.set(x, top + pad, x + sw, top + hh - pad);
-            float rr = feedSegRect.height() / 2;
-            Paint p = selected ? feedSegOn : feedSeg;
+            float f = selected ? focus : 0, sc = 1 + 0.05f * f, lift = 8 * k * f;
+            float cx = MARGIN * k + i * (t + gap) + t / 2, cy = top + t / 2 - lift, half = t * sc / 2, rr = 24 * k * sc;
+            cell.set(cx - half, cy - half, cx + half, cy + half);
             if (selected) {
-                fill.setColor(accent(0.24f));   // the section shown: a soft pill in the accent (focused: the full accent)
-                c.drawRoundRect(feedSegRect, rr, rr, fill);
-                if (focus > 0.01f) {
-                    fill.setColor(accent(focus));
-                    c.drawRoundRect(feedSegRect, rr, rr, fill);
-                }
-                p.setColor(blend(0xFFFFFFFF, L_INK, focus));   // dark on the accent pill
+                tmp.set(cell);
+                tmp.inset(8 * k, 8 * k);
+                tmp.offset(0, 24 * k);
+                shadowDeep.setColor(0x99000000);
+                shadows.drawCached(c, tmp, rr, 32 * k, shadowDeep);
+                // The warm light under it, on the "floor".
+                glassTmp.set(cell.left + 4 * k, cell.bottom + 2 * k, cell.right - 4 * k, cell.bottom + 14 * k);
+                subM.setScale(glassTmp.width(), glassTmp.height());
+                subM.postTranslate(glassTmp.left, glassTmp.top);
+                subGlow.setLocalMatrix(subM);
+                fill.setShader(subGlow);
+                c.drawOval(glassTmp, fill);
             }
-            float ix = feedSegRect.centerX() - icon / 2, cyS = feedSegRect.centerY();
-            Bitmap art = feedSwitchIcon(i);
-            if (art != null) {
-                feedSegRect.set(ix, cyS - icon / 2, ix + icon, cyS + icon / 2);
-                bitmapPaint.setAlpha(selected ? 255 : 200);
-                c.drawBitmap(art, null, feedSegRect, bitmapPaint);
-                bitmapPaint.setAlpha(255);
-            } else {   // not fetched (tools/fetch_emojis.sh): the TV's own emoji
-                if (feedSegEmoji == null) feedSegEmoji = Ui.text(android.graphics.Typeface.DEFAULT, 30 * k, 0xFFFFFFFF);
-                String e = i == 0 ? "\uD83C\uDF7F" : "\uD83C\uDFAE";
-                c.drawText(e, ix + (icon - feedSegEmoji.measureText(e)) / 2, cyS + Ui.halfCap(feedSegEmoji), feedSegEmoji);
+            subM.setScale(cell.width(), cell.height());
+            subM.postTranslate(cell.left, cell.top);
+            LinearGradient g = selected ? subIvory : subGraphite;
+            g.setLocalMatrix(subM);
+            fill.setShader(g);
+            fill.setAlpha(selected ? 255 : 191);
+            c.drawRoundRect(cell, rr, rr, fill);
+            fill.setShader(null);
+            fill.setAlpha(255);
+            border.setStrokeWidth((selected ? 2 : 1) * k);
+            border.setColor(selected ? 0x80FFF8EC : 0x29FFFFFF);
+            float in = border.getStrokeWidth() / 2;
+            glassTmp.set(cell.left + in, cell.top + in, cell.right - in, cell.bottom - in);
+            c.drawRoundRect(glassTmp, rr - in, rr - in, border);
+            border.setStrokeWidth(2 * k);
+            float icon = 44 * k * sc, it = selected ? time : Float.NaN;
+            int alpha = selected ? 255 : 191;
+            if (i == 0) TabIcons.popcorn(c, cx, cy, icon, it, alpha);
+            else TabIcons.controller(c, cx, cy, icon, it, alpha);
+            if (f > 0.01f) {   // the remote on it: the ivory ring, 3 px out
+                float o = 5.5f * k;
+                glassTmp.set(cell.left - o, cell.top - o, cell.right + o, cell.bottom + o);
+                border.setColor(Ui.alpha(ACCENT, f));
+                border.setStrokeWidth(3 * k);
+                c.drawRoundRect(glassTmp, rr + o, rr + o, border);
+                border.setStrokeWidth(2 * k);
             }
-            x += sw + pad;
         }
     }
 
@@ -7976,15 +7977,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void layoutLight() {
         if (lTab == null) return;
         // Text tabs; the focus pill extends 26 px past the text (the first tab's text starts at the margin).
-        float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
-        // The first tab's pill starts at the margin, in line with "For You" and the grid (it used to start `pad` to the
-        // left of it, so the focused pill stuck out past the title).
-        float x = MARGIN * k;
-        for (int i = 0; i < TABS; i++) {
-            float tw = Math.max(lTabOn.measureText(tabs()[i]), lTab.measureText(tabs()[i]));
-            topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
-            x = topRects[i].right + 4 * k;
-        }
+        layoutTabs();
         float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
         for (int i = lightButtons.size() - 1; i >= 0; i--) {
             topRects[TABS + i].set(right - b, cy - b / 2, right, cy + b / 2);
@@ -8212,6 +8205,119 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    // MARK: - Tabs V1 (Morph Dock): graphite glass tiles with ivory line icons; the selected tab stretches into an ivory
+    // capsule with its name (its icon on a dark tile); the remote on the tabs lifts it 6 px with the ivory ring.
+
+    private final Spring[] tabSel = new Spring[TABS];
+    private final float[] tabCap = new float[TABS];
+    private Paint tabName;
+    private LinearGradient tabGraphite, tabIvory, tabInner;
+    private final Matrix tabM = new Matrix();
+
+    private Spring tabSel(int i) {
+        if (tabSel[i] == null) tabSel[i] = new Spring(0.26f, 0.9f, i == tab ? 1 : 0);
+        return tabSel[i];
+    }
+
+    private boolean stepTabs(float dt) {
+        boolean moving = false;
+        for (int i = 0; i < TABS; i++) {
+            Spring sp = tabSel(i);
+            sp.target = i == tab ? 1 : 0;
+            moving |= sp.step(dt);
+        }
+        if (moving) heroDirty = true;
+        return moving;
+    }
+
+    /** The tabs' places now: each as wide as its selection makes it (72 → its capsule), 16 apart from the margin. */
+    private void layoutTabs() {
+        if (tabName == null) {
+            tabName = Ui.text(Ui.semibold, 28 * k, 0xFF1A1612);
+            for (int i = 0; i < TABS; i++) tabCap[i] = TabsLogic.capsuleWidth(tabName.measureText(tabs()[i]) / k);
+        }
+        float x = MARGIN * k, top = L_TABBAR_TOP * k, hh = TabsLogic.TILE * k;
+        for (int i = 0; i < TABS; i++) {
+            float wv = TabsLogic.tabWidth(tabSel(i).value, tabCap[i]) * k;
+            topRects[i].set(x, top, x + wv, top + hh);
+            x += wv + 16 * k;
+        }
+    }
+
+    private void shaderIn(LinearGradient g, RectF r) {
+        tabM.setScale(r.width(), r.height());
+        tabM.postTranslate(r.left, r.top);
+        g.setLocalMatrix(tabM);
+    }
+
+    private void drawTabsV1(Canvas c) {
+        layoutTabs();
+        if (tabGraphite == null) {
+            tabGraphite = new LinearGradient(0, 0, 0.36f, 1, 0xFF3A3836, 0xFF1A1918, Shader.TileMode.CLAMP);
+            tabIvory = new LinearGradient(0, 0, 0, 1, new int[] {0xFFFFF8EC, 0xFFEADFCB, 0xFFD2C2A6}, new float[] {0, 0.6f, 1}, Shader.TileMode.CLAMP);
+            tabInner = new LinearGradient(0, 0, 0.36f, 1, 0xFF3A3330, 0xFF1A1614, Shader.TileMode.CLAMP);
+        }
+        float focus = Ui.clamp(topFocus[tab].value), rr = 24 * k;
+        for (int i = 0; i < TABS; i++) {
+            float sel = Ui.clamp(tabSel(i).value), lift = i == tab ? 6 * k * focus : 0;
+            cell.set(topRects[i]);
+            cell.offset(0, -lift);
+            // Its shadow: dark under a tile, warm under the capsule (cached blurs: the same shapes once settled).
+            tmp.set(cell);
+            float spread = (8 + 4 * sel) * k;
+            tmp.inset(spread, spread);
+            tmp.offset(0, (12 + 8 * sel) * k + lift);
+            shadowDeep.setColor(blend(0xB3000000, 0x73F3E2BE, sel));
+            shadows.drawCached(c, tmp, rr, (24 + 16 * sel) * k, shadowDeep);
+            if (sel < 0.999f) {
+                shaderIn(tabGraphite, cell);
+                fill.setShader(tabGraphite);
+                fill.setAlpha(Math.round(255 * (1 - sel)));
+                c.drawRoundRect(cell, rr, rr, fill);
+            }
+            if (sel > 0.001f) {
+                shaderIn(tabIvory, cell);
+                fill.setShader(tabIvory);
+                fill.setAlpha(Math.round(255 * sel));
+                c.drawRoundRect(cell, rr, rr, fill);
+            }
+            fill.setShader(null);
+            fill.setAlpha(255);
+            border.setStrokeWidth(1 * k);   // the glass's lit edge
+            border.setColor(Ui.alpha(0xFFFFFFFF, 0.22f + 0.5f * sel));
+            glassTmp.set(cell.left + 0.5f * k, cell.top + 0.5f * k, cell.right - 0.5f * k, cell.bottom - 0.5f * k);
+            c.drawRoundRect(glassTmp, rr, rr, border);
+            border.setStrokeWidth(2 * k);
+            float icx = cell.left + 36 * k, icy = cell.centerY();   // the tile's middle = the capsule's icon tile's middle
+            if (sel > 0.001f) {   // the capsule's dark icon tile
+                glassTmp.set(icx - 28 * k, icy - 28 * k, icx + 28 * k, icy + 28 * k);
+                shaderIn(tabInner, glassTmp);
+                fill.setShader(tabInner);
+                fill.setAlpha(Math.round(255 * sel));
+                c.drawRoundRect(glassTmp, 18 * k, 18 * k, fill);
+                fill.setShader(null);
+                fill.setAlpha(255);
+            }
+            TabIcons.tab(c, i == APPS_TAB ? 2 : i == FOR_YOU_TAB ? 1 : 0, icx, icy, (32 - 2 * sel) * k, blend(0xD9F3EDE2, 0xFFF3EDE2, sel));
+            if (sel > 0.01f) {   // its name, appearing as the tile stretches (never past the capsule's edge)
+                c.save();
+                c.clipRect(cell);
+                tabName.setAlpha(Math.round(255 * sel));
+                c.drawText(tabs()[i], cell.left + 80 * k, icy + Ui.halfCap(tabName), tabName);
+                tabName.setAlpha(255);
+                c.restore();
+            }
+            if (i == tab && focus > 0.01f) {   // the remote on the tabs: the ivory ring, 4 px out
+                float o = 5.5f * k;
+                glassTmp.set(cell.left - o, cell.top - o, cell.right + o, cell.bottom + o);
+                border.setColor(Ui.alpha(ACCENT, focus));
+                border.setStrokeWidth(3 * k);
+                c.drawRoundRect(glassTmp, rr + o, rr + o, border);
+                border.setStrokeWidth(2 * k);
+            }
+        }
+    }
+
     private void drawLightImage(Canvas c, Backdrop b, float alpha) {
         if (night < 0.999f || b.nightImage == null) drawImage(c, b.lightImage, alpha);
         if (night > 0.001f) drawImage(c, b.nightImage, alpha * night);
@@ -8226,50 +8332,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         drawGreeting(c);
-        // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
-        // the white pill with a shadow and grows a little (the tvOS focus).
-        float focus = Ui.clamp(topFocus[tab].value);
-        for (int i = 0; i < TABS; i++) {
-            RectF r = topRects[i];
-            // The section you're in, always (its own state, not focus): a liquid glass pill behind its tab, the same
-            // material as the weather pill. With the remote on the tabs it gives way to the white focus pill below.
-            if (i == tab && focus < 0.99f) {
-                float rr = r.height() / 2;
-                // At rest, from the cache: its liquid glass was rendered again by the GPU on every frame of a focus move
-                // in the grid below. Per background (it shows what's behind it); live while one crossfades.
-                long sig = 17L + 31L * System.identityHashCode(bgTo) + Float.floatToIntBits(r.width()) * 7L
-                        + Float.floatToIntBits(r.left) * 3L + Float.floatToIntBits(r.top) + (dark() > 0.5f ? 1 : 0);
-                if (focus > 0.002f || bgFadeAt != 0 || !heroCards.draw(c, 0x7AB000L + i, sig, r, 24, pc -> {
-                    scene.liquid(pc, r, rr, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k, tone(0.6f, 0.45f), 1);
-                    glassEdge(pc, r, rr, 0.5f, 1.2f * k);
-                })) {
-                    scene.liquid(c, r, rr, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
-                            tone(0.6f, 0.45f), 1 - focus);
-                    glassEdge(c, r, rr, 0.5f * (1 - focus), 1.2f * k);
-                }
-            }
-            if (i == tab && focus > 0.01f) {
-                float s = 1 + 0.05f * focus;
-                // Grows from its centre; the first one from its left edge, so it never passes the margin.
-                float px = i == 0 ? r.left : r.centerX();
-                cell.set(px + (r.left - px) * s, r.centerY() - r.height() * s / 2,
-                        px + (r.right - px) * s, r.centerY() + r.height() * s / 2);
-                float rr = cell.height() / 2;
-                if (focus > 0.01f) {
-                    tmp.set(cell);
-                    tmp.offset(0, 8 * k * focus);
-                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f) * focus));
-                    shadows.draw(c, tmp, rr, SHADOW_BLUR * k, shadow);
-                }
-                fill.setShader(null);
-                fill.setColor(accent(focus));   // the accent pill (was white); its text stays dark
-                c.drawRoundRect(cell, rr, rr, fill);
-            }
-            Paint p = i == tab ? lTabOn : lTab;
-            if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
-            float tcx = i == tab && focus > 0.01f ? cell.centerX() : r.centerX();   // centred in the (grown) pill
-            c.drawText(tabs()[i], tcx - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
-        }
+        drawTabsV1(c);
         int top = -1, count = bento() ? Math.min(cards.size(), SLOTS) : 3;
         for (int i = 0; i < count; i++) if (cardFocus[i].value > 0.02f && (top < 0 || cardFocus[i].value > cardFocus[top].value)) top = i;
         if (tab == APPS_TAB) {
@@ -9155,10 +9218,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (lTitle == null) return;
         bootShape(c, MARGIN * k, (L_TITLE_BASE - 46) * k, MARGIN * k + lTitle.measureText(Ui.tr("For You")), L_TITLE_BASE * k, 14 * k);
-        for (int i = 0; i < TABS; i++) {
+        layoutTabs();
+        for (int i = 0; i < TABS; i++) {   // Tabs V1: the tiles and the selected capsule
             RectF r = topRects[i];
-            float tw = lTab.measureText(tabs()[i]) / 2, th = 13 * k;
-            bootShape(c, r.centerX() - tw, r.centerY() - th, r.centerX() + tw, r.centerY() + th, th);
+            bootShape(c, r.left, r.top, r.right, r.bottom, 24 * k);
         }
         for (int i = 0; i < lightButtons.size(); i++) {
             RectF r = topRects[TABS + i];
