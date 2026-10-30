@@ -7658,6 +7658,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Which cards are drawn large (bigger text and icon): the 2×2 one, or any card at least two rows tall. */
     private final boolean[] bentoBig = new boolean[SLOTS];
     private int bentoLaidOut = -1;
+    private int bentoN = BENTO.length;   // tiles in the bento as laid out: 11 without Continue Watching, else 10
 
     private void layoutBento() {
         layoutBento(cards.size());
@@ -7688,10 +7689,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float height = bottom - top;
         count -= cont;
-        float colW = (width - (BENTO_COLS - 1) * g) / BENTO_COLS, rowH = (height - g) / 2;
-        if (count <= 0 || count >= BENTO.length) {   // the whole bento (none yet: its skeletons' places)
-            for (int j = 0; j < BENTO.length; j++) {
-                int[] b = BENTO[j];
+        // No Continue row: 11 tiles in 3 rows over the whole area (10 when only 10 picks came); with it, 10 in 2 rows.
+        int[][] lay = cont == 0 && (count <= 0 || count >= HomeNav.BENTO_FULL.length) ? HomeNav.BENTO_FULL : BENTO;
+        int layRows = lay == HomeNav.BENTO_FULL ? 3 : 2;
+        bentoN = lay.length;
+        float colW = (width - (BENTO_COLS - 1) * g) / BENTO_COLS, rowH = (height - (layRows - 1) * g) / layRows;
+        if (count <= 0 || count >= lay.length) {   // the whole bento (none yet: its skeletons' places)
+            for (int j = 0; j < lay.length; j++) {
+                int[] b = lay[j];
                 float x = left + b[0] * (colW + g), y = top + b[1] * (rowH + g);
                 cardRects[cont + j].set(x, y, x + b[2] * colW + (b[2] - 1) * g, y + b[3] * rowH + (b[3] - 1) * g);
                 bentoBig[cont + j] = b[2] == 2 && b[3] == 2;
@@ -7727,7 +7732,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         List<Recs.Pick> list = !bento() ? recs.now(TAB_KIND[tab])
-                : tab == 0 ? recs.homeShown(BENTO.length + ContinueLogic.MAX) : recs.tabShown(TAB_KIND[tab]);
+                : tab == 0 ? recs.homeShown(HomeNav.BENTO_FULL.length + ContinueLogic.MAX) : recs.tabShown(TAB_KIND[tab]);
         // Home: the Continue row first (from the history in memory), then 7 picks not already in it.
         List<String> contLines = new ArrayList<>();
         List<Recs.Pick> cont = bento() && tab == 0 ? recs.continueShown(contLines) : new ArrayList<>();
@@ -7735,7 +7740,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             java.util.Set<String> inRow = new java.util.HashSet<>();
             for (Recs.Pick p : cont) inRow.add(Recs.key(p));
             List<Recs.Pick> all = new ArrayList<>(cont);
-            for (Recs.Pick p : list) if (all.size() < cont.size() + BENTO.length && !inRow.contains(Recs.key(p))) all.add(p);
+            for (Recs.Pick p : list) if (all.size() < cont.size() + (cont.isEmpty() ? HomeNav.BENTO_FULL.length : BENTO.length) && !inRow.contains(Recs.key(p))) all.add(p);
             list = all;
         }
         int contBefore = contShown;
@@ -8027,7 +8032,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             drawBentoNote(c, count);
             if (contShown > 0) drawContinueLabel(c);
             if (count <= contShown) {   // only the Continue row so far: the picks' skeletons, or why there are none
-                if (recs.listLoading()) for (int j = contShown; j < contShown + BENTO.length; j++) drawSkeletonSlot(c, cardRects[j], bentoBig[j], 1);
+                if (recs.listLoading()) for (int j = contShown; j < Math.min(SLOTS, contShown + bentoN); j++) drawSkeletonSlot(c, cardRects[j], bentoBig[j], 1);
                 else drawBentoEmpty(c);
             }
             for (int i = 0; i < count; i++) if (i != top) drawBentoCard(c, i);
@@ -8304,7 +8309,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawBentoSkeleton(Canvas c) {
         if (bentoLaidOut != 0) layoutBento(0);
-        for (int i = 0; i < BENTO.length; i++) drawSkeletonSlot(c, cardRects[i], bentoBig[i], 1);
+        for (int i = 0; i < bentoN; i++) drawSkeletonSlot(c, cardRects[i], bentoBig[i], 1);
     }
 
     /** One card's skeleton (its shape, icon, title and line placeholders, the sweeping light), at `alpha`. */
@@ -8927,7 +8932,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float cy = (L_TABBAR_TOP + L_TABBAR_H / 2) * k;
         bootShape(c, (CONTENT_R - 330) * k, cy - 22 * k, CONTENT_R * k, cy + 22 * k, 22 * k);   // the weather and time pill
         if (bentoLaidOut != 0) layoutBento(0);
-        for (int i = 0; i < BENTO.length; i++) drawSkeletonSlot(c, cardRects[i], bentoBig[i], 1);
+        for (int i = 0; i < bentoN; i++) drawSkeletonSlot(c, cardRects[i], bentoBig[i], 1);
         if (platterRect.width() > 0) {
             bootShape(c, platterRect.left, platterRect.top, platterRect.right, platterRect.bottom, platterRect.height() / 2);
             for (int i = 0; i < shelf.size() && i < tileRects.length; i++) {

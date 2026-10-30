@@ -18,6 +18,24 @@ public class HomeNavTest {
         // Only Continue cards (picks not loaded yet): its first either way.
         check("only continue, from tabs", HomeNav.sectionFirst(4, 4, true) == 0);
         check("only continue, from dock", HomeNav.sectionFirst(4, 4, false) == 0);
+        // Home without Continue Watching: 11 tiles filling 8 columns × 3 rows exactly (no gap, no overlap), one 2×2.
+        int[][] full = HomeNav.BENTO_FULL;
+        check("full bento: 11 tiles", full.length == 11);
+        int[] cells = new int[24];
+        int big = 0;
+        boolean inside = true;
+        for (int[] b : full) {
+            if (b[2] == 2 && b[3] == 2) big++;
+            for (int x = b[0]; x < b[0] + b[2]; x++) for (int y = b[1]; y < b[1] + b[3]; y++) {
+                if (x < 0 || x >= 8 || y < 0 || y >= 3) inside = false; else cells[y * 8 + x]++;
+            }
+        }
+        boolean exact = true;
+        for (int n : cells) exact &= n == 1;
+        check("full bento: inside the grid", inside);
+        check("full bento: every cell once", exact);
+        check("full bento: one large card", big == 1);
+        check("full bento: the large card first", full[0][2] == 2 && full[0][3] == 2);
         // Nothing at all.
         check("empty", HomeNav.sectionFirst(0, 0, true) == 0);
 
