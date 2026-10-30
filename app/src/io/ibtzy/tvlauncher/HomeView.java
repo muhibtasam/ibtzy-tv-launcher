@@ -8389,6 +8389,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * background, cached for the app's life): an app named for AirPlay that can be launched, else an exported screen
      * whose name says AirPlay (a settings one first). Everything found is logged: adb logcat -s ibtzyTV | grep airplay
      */
+    /** The lookup is done and found no AirPlay (no input, no screen, no app): its tile shows the TV's Inputs instead. */
+    private boolean ccNoAirplay() {
+        return airplayFound != null && !ccAirplayInput && ccAirplayIntent == null;
+    }
+
     private void findAirplay() {
         Object[] known = airplayFound;
         if (known != null) {
@@ -8665,6 +8670,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 ccOpenItem(HomeApps.action(HomeApps.BLUETOOTH, HomeApps.TOP_BLUETOOTH, Ui.tr("Bluetooth"), "bluetooth"));
                 break;
             case CC_AIRPLAY:
+                if (ccNoAirplay()) {   // this TV has no AirPlay: the tile is Inputs, the drawer's HDMI sources
+                    closeCC(true);
+                    openDrawer();
+                    for (int d = 0; d < drawerItems.size(); d++) {
+                        if (drawerItems.get(d).kind == HomeApps.INPUT) {
+                            drawerIndex = d;
+                            break;
+                        }
+                    }
+                    retarget(false);
+                    break;
+                }
                 if (openAirplayInput()) {
                     closeCC(true);
                 } else if (ccAirplayIntent != null) {
@@ -8787,14 +8804,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         drawCCTile(c, CC_WIFI, ccWifi == Radios.OFF ? "wifi_off" : "wifi", Ui.tr("Wi-Fi"), wifiSub, true, ccWifi >= Radios.ON);
         String btSub = ccBt == Radios.ON ? Ui.tr("On") : ccBt == Radios.OFF ? Ui.tr("Off") : Ui.tr("Settings");
         drawCCTile(c, CC_BT, ccBt == Radios.OFF ? "bluetooth_disabled" : "bluetooth", Ui.tr("Bluetooth"), btSub, true, ccBt == Radios.ON);
-        drawCCTile(c, CC_AIRPLAY, "airplay", Ui.tr("AirPlay"), ccAirplayInput || ccAirplayIntent != null
+        if (ccNoAirplay()) drawCCTile(c, CC_AIRPLAY, "hdmi", Ui.tr("Inputs"), Ui.tr("TV sources"), true, false);
+        else drawCCTile(c, CC_AIRPLAY, "airplay", Ui.tr("AirPlay"), ccAirplayInput || ccAirplayIntent != null
                 ? Ui.tr("Open AirPlay") : airplayFound == null ? Ui.tr("Looking…") : Ui.tr("In TV Settings"), true,
                 false);   // an action like Turn off, not a switch: never drawn as "on"
         drawCCTile(c, CC_OFF, "power_settings_new", Ui.tr("Turn off"), Ui.tr("Screen off"), true, false);
         drawCCVolume(c);
         c.drawText(Ui.tr("HOME SCREEN"), ccPanel.left + CC_PAD * k + 4 * k, ccSectionY, ccSection);
         drawCCTile(c, CC_REFRESH, "refresh", Ui.tr("Refresh"), Ui.tr("New picks now"), false, false);
-        drawCCTile(c, CC_HOME_SETTINGS, "home", Ui.tr("Home Settings"), "ibtzy TV Launcher", false, false);
+        drawCCTile(c, CC_HOME_SETTINGS, "home", Ui.tr("Launcher"), Ui.tr("Tabs, theme, shelf"), false, false);
         drawCCTile(c, CC_CLEAR, "delete", Ui.tr("Clear watch history"), Ui.tr("Titles opened from the cards"), false, false);
         drawCCTile(c, CC_ALL, "settings", Ui.tr("All settings"), null, false, false);
     }
