@@ -31,3 +31,7 @@ webos/
 tizen/
 .github/
 backups/
+
+# Your screensaver photos stay local
+screensaver/*
+!screensaver/README.txt
