@@ -247,4 +247,8 @@ final class Prefs {
         for (int key : KEYS) sb.append(key).append('=').append(key == keyCode ? pkg : keyApp(key)).append('\n');
         if (writeKeys(sb.toString())) version++;
     }
+
+    // Continue Watching from Android TV's Watch Next list: apps turned off and entries hidden (none yet).
+    static java.util.Set<String> watchOff() { return new java.util.HashSet<>(sp().getStringSet("watchOff", java.util.Collections.emptySet())); }
+    static java.util.Set<String> watchHidden() { return new java.util.HashSet<>(sp().getStringSet("watchHidden", java.util.Collections.emptySet())); }
 }

@@ -809,7 +809,53 @@ final class Recs {
      * Home's Continue row: the titles last opened from the cards (ContinueLogic picks which), each with its line
      * ("Season 2 · Opened yesterday") in `lines`. Read from the history in memory; no network.
      */
+    // Continue Watching from Android TV's Watch Next list (what the apps themselves say you left half-way, with the
+    // place you stopped): read in the background, shown first; the cards' own history only when it's empty.
+    private volatile List<Pick> watchNext = new ArrayList<>();
+    private volatile List<String> watchLines = new ArrayList<>();
+
+    /** Reads Watch Next off the main thread; `done` runs on the main thread when the list changed. */
+    void refreshWatchNext(Runnable done) {
+        imagesIo.execute(() -> {
+            List<Pick> picks = new ArrayList<>();
+            List<String> lines = new ArrayList<>();
+            for (WatchNext.Item it : WatchNext.load(context)) {
+                if (picks.size() >= ContinueLogic.MAX) break;
+                String art = it.picture();
+                if (it.title == null || art == null) continue;   // a card needs its title and its picture
+                Pick p = new Pick();
+                p.kind = "watchnext";
+                p.id = (it.pkg + "|" + it.title).hashCode();
+                p.title = it.title;
+                p.backdrop = art;
+                p.pkg = it.pkg;
+                p.app = serviceOf(it.pkg);
+                p.link = it.intent;
+                picks.add(p);
+                float pr = it.progress();
+                String where = it.episode != null ? it.episode : it.app != null ? it.app : "";
+                lines.add(pr > 0 ? (where.isEmpty() ? "" : where + " · ") + Math.round(pr * 100) + "% watched" : where);
+            }
+            boolean changed = picks.size() != watchNext.size();
+            for (int i = 0; !changed && i < picks.size(); i++) changed = !key(picks.get(i)).equals(key(watchNext.get(i))) || !lines.get(i).equals(watchLines.get(i));
+            if (!changed) return;
+            watchNext = picks;
+            watchLines = lines;
+            if (done != null) new android.os.Handler(android.os.Looper.getMainLooper()).post(done);
+        });
+    }
+
+    private static String serviceOf(String pkg) {
+        for (String[] s : SERVICES) if (s[2].equals(pkg)) return s[1];
+        return null;
+    }
+
     List<Pick> continueShown(List<String> lines) {
+        List<Pick> wn = watchNext;
+        if (!wn.isEmpty()) {
+            lines.addAll(watchLines);
+            return new ArrayList<>(wn);
+        }
         List<Pick> history = historyCached();
         List<ContinueLogic.Entry> entries = new ArrayList<>();
         for (Pick p : history) entries.add(new ContinueLogic.Entry(p.id, p.kind, p.app, p.openedAt));
@@ -2260,20 +2306,38 @@ final class Recs {
     }
 
     /** Reads the photo (≥ the UI's width) and builds the backdrop (Backdrop: cards plus frosted and glass versions). */
+    /** A Watch Next picture (content://, android.resource:// or http(s)), at most 8 MB. */
+    private byte[] watchPicture(String uri) throws IOException {
+        android.net.Uri u = android.net.Uri.parse(uri);
+        String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase(java.util.Locale.ROOT);
+        try (java.io.InputStream in = scheme.startsWith("http") ? new java.net.URL(uri).openStream()
+                : context.getContentResolver().openInputStream(u)) {
+            if (in == null) throw new IOException("no picture");
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            for (int n; (n = in.read(buf)) > 0; ) {
+                out.write(buf, 0, n);
+                if (out.size() > (8 << 20)) throw new IOException("picture too large");
+            }
+            return out.toByteArray();
+        }
+    }
+
     private void loadImage(Pick p) {
         synchronized (images) {
             if (images.containsKey(p.backdrop)) return;
         }
         File f = imageFile(p);
         try {
-            download(p);
+            byte[] wn = "watchnext".equals(p.kind) ? watchPicture(p.backdrop) : null;   // the app's own picture
+            if (wn == null) download(p);
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(f.getPath(), bounds);
+            if (wn != null) BitmapFactory.decodeByteArray(wn, 0, wn.length, bounds); else BitmapFactory.decodeFile(f.getPath(), bounds);
             BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inSampleSize = 1;
+            opts.inSampleSize = 1;   // sampled down before decoding: never more pixels than the card needs
             while (bounds.outWidth / (opts.inSampleSize * 2) >= Backdrop.W) opts.inSampleSize *= 2;
-            Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+            Bitmap b = wn != null ? BitmapFactory.decodeByteArray(wn, 0, wn.length, opts) : BitmapFactory.decodeFile(f.getPath(), opts);
             if (b == null) throw new IOException("unreadable image");
             AppLog.w("backdrop \u201c" + p.title + "\u201d: " + bounds.outWidth + "×" + bounds.outHeight + " → " + Backdrop.W + "×" + Backdrop.H);
             boolean forLight = light;

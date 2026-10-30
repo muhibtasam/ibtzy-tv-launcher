@@ -690,6 +690,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (running) return;
         running = true;
         refreshTabs();
+        recs.refreshWatchNext(this::updateCards);   // Continue Watching: what the apps say you left half-way
         checkNight(false);
         long now = SystemClock.uptimeMillis();
         // Some remotes (Xiaomi's) send one Home press as a burst of 5 to 8, and each one pauses and resumes the home
