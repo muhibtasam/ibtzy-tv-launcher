@@ -1222,6 +1222,11 @@ final class HomeApps {
                 if (plain != null) plain.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                 if (intent != null && it.uri != null) {
                     intent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it.uri)).addCategory(Intent.CATEGORY_BROWSABLE).setPackage(it.pkg);
+                    // Netflix ignores the title's address when it is already open or when no source is named: it opens its own home.
+                    // Like the TV launchers do, name its activity and the source (30) and start it in a fresh task.
+                    if ("com.netflix.ninja".equals(it.pkg) && plain != null && plain.getComponent() != null) {
+                        intent.setComponent(plain.getComponent()).putExtra("source", "30").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    }
                 }
                 break;
             case LIVE_TV:
