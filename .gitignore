@@ -23,3 +23,11 @@ snapshots/
 shots/
 /*.png
 /*.txt
+
+# Not part of this Android TV launcher (LG, Samsung, website, upstream CI): kept on disk only
+docs/
+web/
+webos/
+tizen/
+.github/
+backups/
