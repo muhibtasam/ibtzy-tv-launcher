@@ -380,7 +380,7 @@ public class SettingsActivity extends Activity {
             c.drawText("ibtzy", lx, 470 * k, title);
             c.drawText("TV Launcher", lx + title.measureText("ibtzy ") , 470 * k, titleIt);
             c.drawText(Ui.tr("Your TV's home screen and screensaver"), lx, 524 * k, subtitle);
-            c.drawText(versionName(getContext()), lx, 562 * k, version);
+            c.drawText(versionName(getContext()).replace("ibtzy TV Launcher ", "Version "), lx, 562 * k, version);
 
             if (screen == MAIN) drawMain(c, seconds); else if (screen == HOME_CHOICE) drawChoice(c); else if (screen == PICKER) drawPicker(c); else if (screen == SHELF_EDIT) drawShelfEditor(c); else drawList(c);
         }
