@@ -1,6 +1,6 @@
 # ibtzy TV Launcher
 
-A fast, ad-free home screen for Google TV and Android TV, tuned on a TCL TV.
+A fast, ad-free home screen for Google TV and Android TV.
 
 - **Home**: your apps, continue watching and today's picks.
 - **For You**: Movies & Shows and Games (release countdown, Hype Track, trending).
