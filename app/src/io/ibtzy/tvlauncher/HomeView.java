@@ -844,6 +844,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         aimDockScroll(!animated);
         if (!animated) dockHide.snap(0);
         stopTyping();
+        resetApps();
         sheetOpen = false;
         drawerOpen = false;
         if (animated) {
@@ -860,6 +861,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tab != 0) selectTab(0);
         retarget(!animated);
         motionDirty = true;
+    }
+
+    /** Home: Apps back to all apps, no search, from its top (it shows so the next time it opens). */
+    private void resetApps() {
+        boolean was = appsCat != AppsLogic.ALL || !appsQuery.isEmpty();
+        appsCat = AppsLogic.ALL;
+        appsQuery = "";
+        if (searchInput != null) searchInput.setText("");
+        appsZone = A_GRID;
+        searchPart = 0;
+        if (was) applyQuery(false);
+        gridIndex = 0;
+        scroll.snap(0);
     }
 
     /** The round buttons at the top right (Settings > Top Buttons), with their names in the current language. */
@@ -4598,7 +4612,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             if (movieRow(row.key)) {
                 drawMovieHeading(c, row.name, top);
-                if (Games.POPULAR.equals(row.key)) drawTrendChip(c, top);
             }
             else c.drawText(row.name, MARGIN * k, (top + 30) * k, feedLabel);
             float off = feedSpring(feedScrollX, row.key, 0.24f, 1f).value;
@@ -4627,7 +4640,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             // Movies V1: the wide card's description under it, as in Games (it fades in as the card widens).
             if (gameRow(row.key) && movieRow(row.key)) {   // Games V1: Trending's places under the posters, then the facts
-                if (Games.POPULAR.equals(row.key)) drawRanks(c, row, xs, top + label + cardH);
                 if (prominent >= 0 && prominent < row.items.size())
                     drawGameInfo(c, row.items.get(prominent), xs[prominent], top + label + cardH + infoFixedH(row.key), Ui.clamp(feedProm(row.key, prominent, 1).value));
             } else if (movieRow(row.key) && prominent >= 0 && prominent < row.items.size()) {
@@ -4806,6 +4818,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float pad = (W > 400 * k ? 30 : 18) * k, left = -W / 2 + pad, bottom = H / 2 - pad;
         boolean trending = Discover.TRENDING.equals(row.key) || Games.POPULAR.equals(row.key), movie = movieRow(row.key);
         if (movie && gx == null) drawMovieCardText(c, t, i, trending, W, H, pr, null);
+        else if (movie && trending) drawGameRank(c, i, W, H, pr);   // Games V1: Trending's place on the art, as Movies'
         // Text: the wide layout (big title; Trending also its big rank and the kind) and the tall one, crossfading.
         int wideA = Math.round(255 * pr), tallA = Math.round(255 * (1 - pr));
         if (!movie && wideA > 2) {
@@ -5221,25 +5234,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
-    /** Trending's heading: "Trending in India" (or worldwide) in a pill at the row's right. */
-    private void drawTrendChip(Canvas c, float top) {
-        gvPaints();
-        if (gvTrend.isEmpty()) return;
-        if (trendFor != gvTrend) {
-            trendFor = gvTrend;
-            trendW = trendChip.measureText(gvTrend);
-        }
-        float h = 38 * k, w = trendW + 32 * k, x = CONTENT_R * k - w, cy = (top + 38) * k - Ui.halfCap(mvHead), y0 = cy - h / 2;
-        fill.setShader(null);
-        fill.setColor(0x1AF3EDE2);
-        c.drawRoundRect(x, y0, x + w, y0 + h, h / 2, h / 2, fill);
-        border.setColor(0x38F3EDE2);
-        border.setStrokeWidth(1 * k);
-        c.drawRoundRect(x, y0, x + w, y0 + h, h / 2, h / 2, border);
-        border.setStrokeWidth(2 * k);
-        c.drawText(gvTrend, x + 16 * k, cy + Ui.halfCap(trendChip), trendChip);
-    }
-
     /** The critics' score in a gold ring (its share of 100), top right at (right, top), `size` across (card-centred). */
     private void drawScoreRing(Canvas c, String score, float right, float top, float size) {
         gvPaints();
@@ -5356,7 +5350,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     // Games V1 rows: under the cards, the focused game's title, its chips (as the top section's) and description.
-    private static final float GV_ROW_INFO = 24 + 40 + 16 + 40 + 18 + 3 * 19 * 1.45f + 8, GV_RANK_H = 48;
+    private static final float GV_ROW_INFO = 24 + 40 + 16 + 40 + 18 + 3 * 19 * 1.45f + 8;
     private final String[] gvRank = new String[30];
 
     private static float infoH(String row) {
@@ -5366,15 +5360,31 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** What stays under a row when it isn't focused: Trending's places. */
     private static float infoFixedH(String row) {
-        return Games.POPULAR.equals(row) ? GV_RANK_H : 0;
+        return 0;
     }
 
-    private void drawRanks(Canvas c, Discover.Row row, float[] xs, float cardsBottom) {
-        gvPaints();
-        for (int i = 0; i < row.items.size() && i < gvRank.length; i++) {
-            if ((xs[i] + MV_W) * k < 0 || xs[i] * k > w) continue;
-            if (gvRank[i] == null) gvRank[i] = String.valueOf(i + 1);
-            c.drawText(gvRank[i], xs[i] * k, (cardsBottom + 36) * k, cdRank);
+    private Paint gvRankBig, gvRankSm;
+
+    /** A Trending game's place, bottom left on its clean art (Movies' serif sizes, a soft shadow to read on any art). */
+    private void drawGameRank(Canvas c, int i, float W, float H, float pr) {
+        if (gvRankBig == null) {
+            gvRankBig = Ui.text(Ui.displaySemibold, 120 * k, 0xFFFFFFFF);
+            gvRankSm = Ui.text(Ui.displaySemibold, 64 * k, 0xFFFFFFFF);
+            for (Paint p : new Paint[] {gvRankBig, gvRankSm}) {
+                p.setColorFilter(IVORY_TEXT);
+                p.setShadowLayer(14 * k, 0, 3 * k, 0xB3000000);
+            }
+        }
+        if (i >= gvRank.length) return;
+        if (gvRank[i] == null) gvRank[i] = String.valueOf(i + 1);
+        int wideA = Math.round(255 * pr), tallA = 255 - wideA;
+        if (wideA > 2) {
+            gvRankBig.setAlpha(wideA);
+            c.drawText(gvRank[i], -W / 2 + 24 * k, H / 2 - 20 * k, gvRankBig);
+        }
+        if (tallA > 2) {
+            gvRankSm.setAlpha(tallA);
+            c.drawText(gvRank[i], -W / 2 + 16 * k, H / 2 - 16 * k, gvRankSm);
         }
     }
 
@@ -6379,7 +6389,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float room = searchRect.right - x - sideW - 30 * k;
         if (appsQuery.isEmpty()) {
             if (typing) x = drawCaret(c, x, cy);
-            c.drawText(voice ? Ui.tr("Say or type an app name") : Ui.tr("Search apps"), x, base, searchHint);
+            // The shorter bar: the long hint only when it fits beside "OK to speak" with room to breathe.
+            String hint = voice ? Ui.tr("Say or type an app name") : Ui.tr("Search apps");
+            if (searchHint.measureText(hint) > room - 24 * k) hint = Ui.tr("Search apps");
+            if (searchHint.measureText(hint) > room - 24 * k) side = "";
+            c.drawText(hint, x, base, searchHint);
         } else {
             // A long search keeps its end in view (where the typing is).
             String fit = appsQuery;
@@ -7726,6 +7740,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             // Apps shown under the tabs: the full list, no search left from before, from its top.
             stopTyping();
             appsQuery = "";
+            appsCat = AppsLogic.ALL;   // all apps again, whichever kind was picked before
             if (searchInput != null) searchInput.setText("");
             appsZone = A_GRID;
             applyQuery(false);

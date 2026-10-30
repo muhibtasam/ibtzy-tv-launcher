@@ -480,7 +480,9 @@ public class SettingsActivity extends Activity {
         }
 
         private float drawComparison(Canvas c, float y) {
-            float x = LIST_X * k + 30 * k, colA = LIST_R * k - 220 * k, colB = LIST_R * k - 30 * k;
+            float x = LIST_X * k + 30 * k, colB = LIST_R * k - 30 * k;
+            // "Original" right of the label and clear of "ibtzy TV Launcher" (measured: no overlap in any font size).
+            float colA = colB - cellValue.measureText("ibtzy TV Launcher") - 48 * k;
             c.drawText(Ui.tr("COMPARISON"), x, y, header);
             cellValue.setColor(0x73FFFFFF);
             c.drawText(Ui.tr("Original"), colA, y, cellValue);

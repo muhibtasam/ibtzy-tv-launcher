@@ -931,16 +931,19 @@ final class HomeApps {
     static List<String> suggestions(Context c, int n) {
         List<String> out = new ArrayList<>();
         List<String> used = mostUsed(c, n);
-        if (used != null && !used.isEmpty()) {
-            out.add(Ui.tr("Most used"));
-            out.addAll(used);
-            return out;
-        }
         PackageManager pm = c.getPackageManager();
         String recent = c.getSharedPreferences("apps-history", Context.MODE_PRIVATE).getString("recent", "");
         List<String> opened = new ArrayList<>();
         for (String p : recent.split(",")) {
             if (!p.isEmpty() && !HIDDEN.contains(p) && launchIntent(pm, p) != null && opened.size() < n) opened.add(p);
+        }
+        if (used != null && !used.isEmpty()) {
+            // This TV clears its usage history when it restarts: the few apps used since then, then the ones opened
+            // from here before (so the row is full the morning after, not one app).
+            out.add(Ui.tr("Most used"));
+            out.addAll(used);
+            for (String p : opened) if (out.size() <= n && !out.contains(p)) out.add(p);
+            return out;
         }
         if (!opened.isEmpty()) {
             out.add(Ui.tr("Recently opened"));
