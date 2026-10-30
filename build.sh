@@ -39,7 +39,10 @@ number() {
 LAT="$(number latitude 40.7128)"
 LON="$(number longitude -74.0060)"
 ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
-CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
+CRYPTO=false; [ "$(prop show_crypto false)" = "true" ] && CRYPTO=true
+TMOVIES=true; [ "$(prop tab_movies true)" = "false" ] && TMOVIES=false
+TGAMES=true; [ "$(prop tab_games true)" = "false" ] && TGAMES=false
+TAPPS=true; [ "$(prop tab_apps true)" = "false" ] && TAPPS=false
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 MOSTUSED=true; [ "$(prop shelf_most_used true)" = "false" ] && MOSTUSED=false
 
@@ -68,6 +71,7 @@ final class Config {
     static final String HIDE_SERVICES = "$(prop hide_services '')";
     static final boolean DISABLE_ASSISTANT = $ASSIST;
     static final boolean SHOW_CRYPTO = $CRYPTO;
+    static final boolean TAB_MOVIES = $TMOVIES, TAB_GAMES = $TGAMES, TAB_APPS = $TAPPS;
     static final boolean HIDE_ANIMATION = $ANIMATION;
     static final boolean SHELF_MOST_USED = $MOSTUSED;
     static final String SHELF_APPS = "$(prop shelf_apps '')";

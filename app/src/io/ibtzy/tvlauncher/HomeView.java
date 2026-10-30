@@ -680,7 +680,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void resetForYou() {
         if (gameSheet != null) closeGameSheet();
-        if (gamesOn) setFeedSection(false);
+        boolean games = mediaOne() && showGames;   // one section alone: always that one
+        if (gamesOn != games) setFeedSection(games);
         feedRow = -1;
         feedScrollY.snap(0);
     }
@@ -688,6 +689,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void resume() {
         if (running) return;
         running = true;
+        refreshTabs();
         checkNight(false);
         long now = SystemClock.uptimeMillis();
         // Some remotes (Xiaomi's) send one Home press as a burst of 5 to 8, and each one pauses and resumes the home
@@ -891,6 +893,49 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** The tab names, made again only when the language changes (they are drawn on every frame). */
+    // Settings > Tabs: For You shows with Movies or Games on (one alone: that section, no sub tabs), Apps with Apps on.
+    private boolean showMovies = true, showGames = true, showApps = true;
+
+    private boolean tabShown(int i) {
+        return i == 0 || (i == FOR_YOU_TAB ? showMovies || showGames : showApps);
+    }
+
+    /** One media section only: For You is that section, without its sub tabs. */
+    private boolean mediaOne() {
+        return showMovies != showGames;
+    }
+
+    /** The settings may have changed (Settings is another screen of this app): tabs and For You's section follow. */
+    private void refreshTabs() {
+        boolean m = Prefs.tabMovies(), g = Prefs.tabGames(), a = Prefs.tabApps();
+        if (m == showMovies && g == showGames && a == showApps) return;
+        showMovies = m;
+        showGames = g;
+        showApps = a;
+        tabName = null;   // the For You capsule's name is remeasured
+        if (mediaOne() && gamesOn != showGames) setFeedSection(showGames);
+        if (!tabShown(tab)) selectTab(0);
+        if (zone == Z_TOP && topIndex < TABS && !tabShown(topIndex)) topIndex = tab;
+        if (mediaOne() && feedRow < 0) feedRow = feedRows().isEmpty() ? -1 : 0;
+        retarget(true);
+        motionDirty = true;
+    }
+
+    private String[] tabNames() {
+        String[] t = tabs();
+        if (!mediaOne()) return t;
+        if (shownTabs == null || shownTabsGames != showGames || shownTabsGen != Ui.generation) {
+            shownTabs = new String[] {t[0], showGames ? Ui.tr("Games") : Ui.tr("Movies & Shows"), t[2]};
+            shownTabsGames = showGames;
+            shownTabsGen = Ui.generation;
+        }
+        return shownTabs;
+    }
+
+    private String[] shownTabs;
+    private boolean shownTabsGames;
+    private int shownTabsGen = -1;
+
     private static String[] tabs() {
         if (tabsGeneration != Ui.generation) {
             tabs = new String[] {Ui.tr("Home"), Ui.tr("For You"), Ui.tr("Apps")};
@@ -3941,6 +3986,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private boolean moveFeed(int dx, int dy) {
         if (feedRow < 0) {
+            if (dx != 0 && mediaOne()) return false;   // no sub tabs to switch
             if (dx != 0) {
                 boolean games = dx > 0;
                 if (games == gamesOn) return false;
@@ -3972,6 +4018,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             feedCol.put(row.key, next);
         } else if (dy < 0) {
             resetFeedRow(row);
+            if (feedRow == 0 && mediaOne()) {   // no sub tabs: from the first row straight up to the tabs
+                feedRow = -1;
+                zone = Z_TOP;
+                topIndex = tab;
+                followFeed(false);
+                return true;
+            }
             feedRow--;   // from the first row: -1, the switch
         } else if (dy > 0) {
             if (feedRow >= rows.size() - 1) return false;
@@ -4049,8 +4102,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean retargetFeed(boolean snap) {
         boolean changed = false;
-        float sw = !sheetOpen && zone == Z_CARDS && tab == FOR_YOU_TAB && feedRow < 0 ? 1 : 0;
-        float vis = zone == Z_CARDS && tab == FOR_YOU_TAB && feedRow >= 0 && !sheetOpen ? 0 : 1;
+        float sw = !sheetOpen && zone == Z_CARDS && tab == FOR_YOU_TAB && feedRow < 0 && !mediaOne() ? 1 : 0;
+        float vis = mediaOne() || (zone == Z_CARDS && tab == FOR_YOU_TAB && feedRow >= 0 && !sheetOpen) ? 0 : 1;
         changed |= feedSwitchVis.target != vis;
         feedSwitchVis.target = vis;
         if (snap) feedSwitchVis.snap(vis);
@@ -7372,7 +7425,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             for (int i = 0; i < others.size(); i++) out.add(a11yId(GRID, i));
             return;
         }
-        for (int i = picksOn() ? 0 : TABS; i < TABS + lightButtons.size(); i++) out.add(a11yId(Z_TOP, i));
+        for (int i = picksOn() ? 0 : TABS; i < TABS + lightButtons.size(); i++) if (i >= TABS || tabShown(i)) out.add(a11yId(Z_TOP, i));
         for (int i = 0; i < Math.min(bento() ? SLOTS : 3, cards.size()); i++) out.add(a11yId(Z_CARDS, i));
         for (int i = 0; i < shelf.size(); i++) out.add(a11yId(Z_SHELF, i));
         for (int i = 0; i < drawerItems.size(); i++) out.add(a11yId(Z_DRAWER, i));
@@ -7388,7 +7441,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return label(others, i) + ", " + Ui.trf("{i} of {n}", "i", i + 1, "n", others.size());
             case Z_TOP:
                 if (i >= TABS) return label(lightButtons, i - TABS);
-                return Ui.trf("{name}, tab {i} of {n}", "name", tabs()[i], "i", i + 1, "n", TABS);
+                return Ui.trf("{name}, tab {i} of {n}", "name", tabNames()[i], "i", i + 1, "n", TABS);
             case Z_CARDS: return i < cards.size() ? pickText(cards.get(i)) : "";
             case Z_SHELF:
                 if (reordering && i == shelfIndex) {
@@ -7849,10 +7902,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void layoutTabs() {
         if (tabName == null) {
             tabName = Ui.text(Ui.semibold, 28 * k, 0xFF1A1612);
-            for (int i = 0; i < TABS; i++) tabCap[i] = TabsLogic.capsuleWidth(tabName.measureText(tabs()[i]) / k);
+            for (int i = 0; i < TABS; i++) tabCap[i] = TabsLogic.capsuleWidth(tabName.measureText(tabNames()[i]) / k);
         }
         float x = MARGIN * k, top = L_TABBAR_TOP * k, hh = TabsLogic.TILE * k;
         for (int i = 0; i < TABS; i++) {
+            if (!tabShown(i)) {   // turned off in Settings: no room, no gap
+                topRects[i].set(x, top, x, top + hh);
+                continue;
+            }
             float wv = TabsLogic.tabWidth(tabOpen(i).value, tabCap[i]) * k;
             topRects[i].set(x, top, x + wv, top + hh);
             x += wv + 16 * k;
@@ -7874,6 +7931,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float focus = Ui.clamp(topFocus[tab].value), rr = 24 * k;
         for (int i = 0; i < TABS; i++) {
+            if (!tabShown(i)) continue;
             float sel = Ui.clamp(tabSel(i).value), open = Ui.clamp(tabOpen(i).value), lift = 0;   // focus: the ring only
             cell.set(topRects[i]);
             cell.offset(0, -lift);
@@ -7913,12 +7971,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 fill.setShader(null);
                 fill.setAlpha(255);
             }
-            TabIcons.tab(c, i == APPS_TAB ? 2 : i == FOR_YOU_TAB ? 1 : 0, icx, icy, (32 - 2 * sel) * k, blend(0xD9F3EDE2, 0xFFF3EDE2, sel));
+            if (i == FOR_YOU_TAB && mediaOne()) {   // For You is one section: its own icon (at rest)
+                if (showGames) TabIcons.controller(c, icx, icy, 40 * k, Float.NaN, 255);
+                else TabIcons.popcorn(c, icx, icy, 40 * k, Float.NaN, 255);
+            } else {
+                TabIcons.tab(c, i == APPS_TAB ? 2 : i == FOR_YOU_TAB ? 1 : 0, icx, icy, (32 - 2 * sel) * k, blend(0xD9F3EDE2, 0xFFF3EDE2, sel));
+            }
             if (open > 0.01f) {   // its name, appearing as the tile stretches (never past the capsule's edge)
                 c.save();
                 c.clipRect(cell);
                 tabName.setAlpha(Math.round(255 * open));
-                c.drawText(tabs()[i], cell.left + 80 * k, icy + Ui.halfCap(tabName), tabName);
+                c.drawText(tabNames()[i], cell.left + 80 * k, icy + Ui.halfCap(tabName), tabName);
                 tabName.setAlpha(255);
                 c.restore();
             }
@@ -8835,6 +8898,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         bootShape(c, MARGIN * k, (L_TITLE_BASE - 46) * k, MARGIN * k + lTitle.measureText(Ui.tr("For You")), L_TITLE_BASE * k, 14 * k);
         layoutTabs();
         for (int i = 0; i < TABS; i++) {   // Tabs V1: the tiles and the selected capsule
+            if (!tabShown(i)) continue;
             RectF r = topRects[i];
             bootShape(c, r.left, r.top, r.right, r.bottom, 24 * k);
         }
@@ -9491,14 +9555,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 break;
             case Z_TOP:
                 if (dx != 0) {
-                    int next = Math.max(picksOn() ? 0 : TABS, Math.min(TABS - 1 + lightButtons.size(), topIndex + dx));
+                    int next = topIndex + dx;
+                    while (next >= 0 && next < TABS && !tabShown(next)) next += dx;   // past the tabs turned off
+                    next = Math.max(picksOn() ? 0 : TABS, Math.min(TABS - 1 + lightButtons.size(), next));
+                    if (next < TABS && !tabShown(next)) next = topIndex;
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < TABS) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
                     if (tab == FOR_YOU_TAB) {
                         zone = Z_CARDS;        // down from the tabs: For You's switch (Movies & Shows | Games)
-                        feedRow = -1;
+                        feedRow = mediaOne() && !feedRows().isEmpty() ? 0 : -1;   // one section: its first row
                         followFeed(false);
                         break;
                     }

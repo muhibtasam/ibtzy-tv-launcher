@@ -111,12 +111,21 @@ final class Prefs {
     static boolean sounds() { return sp().getBoolean("sounds", true); }
     static void setSounds(boolean on) { put("sounds", on); }
 
+    // MARK: - Tabs (Settings > Tabs; first values from config.properties)
+
+    static boolean tabMovies() { return sp().getBoolean("tabMovies", Config.TAB_MOVIES); }
+    static void setTabMovies(boolean on) { put("tabMovies", on); }
+    static boolean tabGames() { return sp().getBoolean("tabGames", Config.TAB_GAMES); }
+    static void setTabGames(boolean on) { put("tabGames", on); }
+    static boolean tabApps() { return sp().getBoolean("tabApps", Config.TAB_APPS); }
+    static void setTabApps(boolean on) { put("tabApps", on); }
+
     // MARK: - Widgets and coins
 
     static boolean weather() { return sp().getBoolean("weather", true); }
     static void setWeather(boolean on) { put("weather", on); }
 
-    static boolean quotes() { return sp().getBoolean("quotes", Config.SHOW_CRYPTO); }
+    static boolean quotes() { return false; }   // prices (crypto) removed from this launcher
     static void setQuotes(boolean on) { put("quotes", on); }
 
     static boolean coin(int i) { return sp().getBoolean("coin" + i, true); }
