@@ -7739,9 +7739,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         List<Recs.Pick> cont = bento() && tab == 0 ? recs.continueShown(contLines) : new ArrayList<>();
         if (bento() && tab == 0) {
             java.util.Set<String> inRow = new java.util.HashSet<>();
-            for (Recs.Pick p : cont) inRow.add(Recs.key(p));
+            for (Recs.Pick p : cont) {
+                inRow.add(Recs.key(p));
+                if (p.title != null) inRow.add("t:" + p.title.trim().toLowerCase(java.util.Locale.ROOT));   // Watch Next's entries by name
+            }
             List<Recs.Pick> all = new ArrayList<>(cont);
-            for (Recs.Pick p : list) if (all.size() < cont.size() + (cont.isEmpty() ? HomeNav.BENTO_FULL.length : BENTO.length) && !inRow.contains(Recs.key(p))) all.add(p);
+            for (Recs.Pick p : list) {
+                boolean shown = inRow.contains(Recs.key(p)) || (p.title != null && inRow.contains("t:" + p.title.trim().toLowerCase(java.util.Locale.ROOT)));
+                if (all.size() < cont.size() + (cont.isEmpty() ? HomeNav.BENTO_FULL.length : BENTO.length) && !shown) all.add(p);
+            }
             list = all;
         }
         int contBefore = contShown;
