@@ -18,3 +18,8 @@ tools/.i18n-cache.json
 backup-*/
 snapshots/
 .claude/settings.local.json
+
+# local screenshots and timing logs
+shots/
+/*.png
+/*.txt

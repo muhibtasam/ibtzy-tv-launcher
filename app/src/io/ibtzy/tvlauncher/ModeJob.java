@@ -34,7 +34,7 @@ public class ModeJob extends JobService {
                 AppLog.w("job " + action + " failed: " + t);
             }
             jobFinished(params, false);
-        }, "free-my-tv-" + action).start();
+        }, "ibtzy-tv-launcher-" + action).start();
         return true;
     }
 

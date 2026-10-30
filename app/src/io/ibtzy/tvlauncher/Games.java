@@ -959,7 +959,7 @@ final class Games {
         c.setConnectTimeout(5000);
         c.setReadTimeout(10000);
         c.setRequestProperty("Accept", "application/json");
-        c.setRequestProperty("User-Agent", "ibtzyTVLauncher/1.0 (Android TV home screen; https://github.com/simbasjungles/free-my-tv)");
+        c.setRequestProperty("User-Agent", "ibtzyTVLauncher/1.0 (Android TV home screen; https://github.com/muhibtasam/ibtzy-tv-launcher)");
         try {
             int code = c.getResponseCode();
             if (code != 200) throw new IOException("HTTP " + code + " from " + new URL(url).getHost());
