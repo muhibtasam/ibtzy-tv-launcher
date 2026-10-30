@@ -669,8 +669,9 @@ final class Games {
             for (Discover.Title t : r.items) {
                 JSONObject a = artById.get(t.id);
                 if (a != null) {
-                    if (!a.optString("g").isEmpty()) t.poster = a.optString("g");
-                    else if (!a.optString("c").isEmpty()) t.poster = a.optString("c");   // IGDB's cover
+                    // Posters: IGDB's cover first, then SteamGridDB's portrait art, else RAWG's (as fetched).
+                    if (!a.optString("c").isEmpty()) t.poster = a.optString("c");
+                    else if (!a.optString("g").isEmpty()) t.poster = a.optString("g");
                     // The wide card: RAWG's own 16:9 key art (the game's official art, whole); SteamGridDB's very wide
                     // hero only where Steam has no key art.
                     if (!t.rawg.isEmpty()) t.backdrop = t.rawg;

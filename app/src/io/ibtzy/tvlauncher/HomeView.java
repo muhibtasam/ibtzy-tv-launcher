@@ -358,6 +358,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         final String label;
         final RectF rect = new RectF();
         final Spring focus = new Spring(0.26f, 0.85f, 0);
+        String sub = "";   // Apps Spotlight: when it was last opened ("1h ago")
 
         Chip(int action, HomeApps.Item app, String label) {
             this.action = action;
@@ -3566,10 +3567,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Games V1 (Release Radar): the countdown, the radar, Just released and Trending (posters, as Movies V1).
     // The rows are made from Games' rows once per change (and every 10 minutes: "today" moves), never while drawing.
 
-    private static final float CD_H = 330, CD_GAP = 24, RADAR_LABEL = 0, RADAR_H = 200, RADAR_GAP = 40, GV_ART = 880, GV_DESC_W = 840,
+    private static final float CD_H = 330, CD_GAP = 24, RADAR_LABEL = 0, RADAR_H = 3 * 19 * 1.45f + 24 + 250,   // the description, 24, the Hype Track (HT_BAND)
+            RADAR_GAP = 40, GV_ART = 880, GV_DESC_W = 840,
             GV_DESC_H = 3 * MV_DESC_LINE, GV_ART_ABOVE = 112;
     // The radar (no heading): the shown game's description (2 lines) at its top, the line 123 down, the months under the pins.
-    private static final float RD_LINE = GV_DESC_H + 24 + 28;
+    // The Hype Track (under the description): month bands HT_BAND tall, the line HT_LINE down them, the upper lane at HT_UP.
+    private static final float HT_BAND = 250, HT_LINE = 180, HT_UP = 95;
+    private float[] gvPinSize = new float[0];
+    private String[] gvPinDate = new String[0], gvPinDays = new String[0];
+    private int gvCountIdx = -1;
     private static final int RADAR_PINS = 8;
     private List<Discover.Row> gvSource;
     private List<Discover.Row> gvRows = new ArrayList<>();
@@ -3649,12 +3655,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     ms[i] = when.get(order[i]);
                     gvText.put(t, gvInfo(t, ms[i]));
                 }
+                gvPinSize = new float[ms.length];
+                gvPinDate = new String[ms.length];
+                gvPinDays = new String[ms.length];
+                gvCountIdx = -1;
+                for (int i = 0; i < ms.length; i++) {
+                    Discover.Title t = radar.items.get(i);
+                    gvPinSize[i] = GamesV1Logic.hypeSize(t.hypes);
+                    gvPinDate[i] = GamesV1Logic.shortDate(ms[i], gvTz);
+                    gvPinDays[i] = GamesV1Logic.daysBadge(GamesV1Logic.until(ms[i], now, gvTz));
+                    if (!out.isEmpty() && out.get(0).items.get(0) == t) gvCountIdx = i;
+                }
                 // The line: today at 180, the last pin at its end (CONTENT_R - MARGIN - 56: the pin inside it).
-                float x0 = 180, x1 = CONTENT_R - MARGIN - 28;
+                float x0 = 12, x1 = CONTENT_R - MARGIN - 50;   // today at the margin; the biggest pin inside the end
                 long end = GamesV1Logic.radarEnd(ms, now);
                 gvRadarRel = ms;
                 gvTodayX = x0;
-                gvPinX = GamesV1Logic.pinX(ms, now, end, x0 + 64, x1, 64);
+                gvPinX = GamesV1Logic.pinX(ms, now, end, x0 + 80, x1, 56);   // two lanes: same-lane pins 112 apart
                 gvMonths = GamesV1Logic.monthStarts(now, end, gvTz);
                 gvMonthLabel = new String[gvMonths.length];
                 gvMonthX = new float[gvMonths.length];
@@ -3714,7 +3731,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private static String[] gameV1Text(Discover.Title t, String pill) {
         int score = GamesV1Logic.score(t.score, t.meta);
-        return new String[] {pill, GamesV1Logic.meta(t.platforms, t.genres, t.rating, t.ratings), score > 0 ? String.valueOf(score) : "", ""};
+        String plat = GamesV1Logic.meta(t.platforms, t.genres, 0, 0);
+        String players = GamesV1Logic.meta("", "", t.rating, t.ratings).replace("\u2605", "");
+        String sc = score > 0 ? score + " critics" + (players.isEmpty() ? "" : " · " + players + " players") : players.isEmpty() ? "" : players + " players";
+        // {pill, meta, score, the chips: when, platforms · genre, scores, "star" (the third chip's icon)}
+        return new String[] {pill, GamesV1Logic.meta(t.platforms, t.genres, t.rating, t.ratings), score > 0 ? String.valueOf(score) : "",
+                pill.isEmpty() ? Discover.shortDate(t.date) : pill, plat, sc, "star"};
     }
 
     /** The switch changed: the other section's rows, fading in, the page at its top; Games refreshed if stale. */
@@ -3774,14 +3796,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static float feedRowSpan(String row) {
         if (Games.COUNTDOWN.equals(row)) return CD_H + CD_GAP;
         if (Games.RADAR.equals(row)) return RADAR_LABEL + RADAR_H + RADAR_GAP;
-        return feedLabelH(row) + feedCardH(row) + (movieRow(row) ? MV_INFO + MV_ROW_GAP : FEED_ROW_GAP);
+        return feedLabelH(row) + feedCardH(row) + (movieRow(row) ? infoH(row) + MV_ROW_GAP : FEED_ROW_GAP);
     }
 
     /** Where a row's content ends (for scrolling to it): the hero's bottom, or its cards' bottom (+ the rim's room). */
     private static float feedRowEnd(String row, float top) {
         if (Games.COUNTDOWN.equals(row)) return top + CD_H;
         if (Games.RADAR.equals(row)) return top + RADAR_LABEL + RADAR_H;
-        return top + feedLabelH(row) + feedCardH(row) + (movieRow(row) ? MV_INFO : 24);
+        return top + feedLabelH(row) + feedCardH(row) + (movieRow(row) ? infoH(row) : 24);
     }
 
     /**
@@ -3817,7 +3839,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (movieRow(key)) {
                 Spring sp = feedInfo.get(key);
                 float open = sp == null ? (feedProminent(rows, i) >= 0 ? 1 : 0) : settled ? sp.target : Ui.clamp(sp.value);
-                y -= MV_INFO * (1 - open);
+                y -= (infoH(key) - infoFixedH(key)) * (1 - open);
             }
         }
         return y;
@@ -4562,7 +4584,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float top = feedRowTop(rows, r) - scrollY;
             float cardH = feedCardH(row.key);
             float label = feedLabelH(row.key);
-            if ((top + label + cardH + 40 + (movieRow(row.key) ? MV_INFO : 0)) * k < 200 * k || top * k > h) continue;
+            if ((top + label + cardH + 40 + (movieRow(row.key) ? infoH(row.key) : 0)) * k < 200 * k || top * k > h) continue;
             if (Games.COUNTDOWN.equals(row.key)) {
                 Discover.Title shown = gvShown(rows, focusedRow);
                 if (shown != null) drawCountdown(c, shown, gvShownRel, shown != row.items.get(0), top, r == focusedRow);
@@ -4604,7 +4626,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 feedFocused.set(cell);
             }
             // Movies V1: the wide card's description under it, as in Games (it fades in as the card widens).
-            if (movieRow(row.key) && prominent >= 0 && prominent < row.items.size()) {
+            if (gameRow(row.key) && movieRow(row.key)) {   // Games V1: Trending's places under the posters, then the facts
+                if (Games.POPULAR.equals(row.key)) drawRanks(c, row, xs, top + label + cardH);
+                if (prominent >= 0 && prominent < row.items.size())
+                    drawGameInfo(c, row.items.get(prominent), xs[prominent], top + label + cardH + infoFixedH(row.key), Ui.clamp(feedProm(row.key, prominent, 1).value));
+            } else if (movieRow(row.key) && prominent >= 0 && prominent < row.items.size()) {
                 drawMovieInfo(c, row.items.get(prominent), xs[prominent], top + label + cardH, Ui.clamp(feedProm(row.key, prominent, 1).value));
             }
         }
@@ -4719,9 +4745,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             Discover.Title t = row.items.get(i);
             Discover d = Discover.get(getContext());
             float H = bh * k, r0 = 20 * k;
-            Bitmap tall = d.card(t.poster.isEmpty() ? t.backdrop : t.poster, t.poster.isEmpty(), Math.round(feedNormalW(row.key) * k), Math.round(H), r0);
+            float rc = "game".equals(t.kind) ? -1 : r0;   // Games V1: clean art (no shading: nothing written on it)
+            Bitmap tall = d.card(t.poster.isEmpty() ? t.backdrop : t.poster, t.poster.isEmpty(), Math.round(feedNormalW(row.key) * k), Math.round(H), rc);
             if (Math.abs(i - feedColOf(row.key)) <= 2) {   // the wide art ready ahead for the cards next to the focus
-                d.card(t.backdrop.isEmpty() ? t.poster : t.backdrop, !t.backdrop.isEmpty(), Math.round(feedProminentW(row.key) * k), Math.round(H), r0);
+                d.card(t.backdrop.isEmpty() ? t.poster : t.backdrop, !t.backdrop.isEmpty(), Math.round(feedProminentW(row.key) * k), Math.round(H), rc);
             }
             long sig = 17;
             sig = 31 * sig + System.identityHashCode(t);
@@ -4759,12 +4786,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // settled size and cut to the card's proportions now (never stretched), inside the card's rounded shape.
         tmp.set(-W / 2, -H / 2, W / 2, H / 2);
         Discover d = Discover.get(getContext());
+        float rc = gx != null ? -1 : r0;   // Games V1: clean art
         Bitmap tall = d.card(t.poster.isEmpty() ? t.backdrop : t.poster, t.poster.isEmpty(),
-                Math.round(feedNormalW(row.key) * k), Math.round(H), r0);
+                Math.round(feedNormalW(row.key) * k), Math.round(H), rc);
         // The wide art: when widening, and ready ahead for the cards next to the focus (no empty frame as one widens).
         boolean soon = pr > 0.001f || Math.abs(i - feedColOf(row.key)) <= 2;
         Bitmap wide = soon ? d.card(t.backdrop.isEmpty() ? t.poster : t.backdrop, !t.backdrop.isEmpty(),
-                Math.round(feedProminentW(row.key) * k), Math.round(H), r0) : null;
+                Math.round(feedProminentW(row.key) * k), Math.round(H), rc) : null;
         // Each art as the shader of a rounded rectangle (no clip mask: on this GPU a clip path cost a mask on every frame
         // of a card widening).
         if (tall == null && wide == null) {
@@ -4777,7 +4805,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         float pad = (W > 400 * k ? 30 : 18) * k, left = -W / 2 + pad, bottom = H / 2 - pad;
         boolean trending = Discover.TRENDING.equals(row.key) || Games.POPULAR.equals(row.key), movie = movieRow(row.key);
-        if (movie) drawMovieCardText(c, t, i, trending, W, H, pr, gx == null ? null : gx[1]);
+        if (movie && gx == null) drawMovieCardText(c, t, i, trending, W, H, pr, null);
         // Text: the wide layout (big title; Trending also its big rank and the kind) and the tall one, crossfading.
         int wideA = Math.round(255 * pr), tallA = Math.round(255 * (1 - pr));
         if (!movie && wideA > 2) {
@@ -4819,7 +4847,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             feedTitle.setAlpha(255);
         }
         // Top left: games: released when, coming when, or the place in Popular; other titles: the date, if still to come.
-        String badge = gx != null ? gx[0] : game ? gameBadge(row.key, t) : Discover.upcoming(t) ? Discover.shortDate(t.date) : "";
+        String badge = gx != null ? "" : game ? gameBadge(row.key, t) : Discover.upcoming(t) ? Discover.shortDate(t.date) : "";
         if (!badge.isEmpty()) {
             String date = badge;
             float cw = feedChip.measureText(date) + 54 * k, ch = 34 * k, tx = -W / 2 + 14 * k, ty = -H / 2 + 14 * k;
@@ -4846,8 +4874,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Top right: where it is (an indicator only).
         float bs = (W > 250 * k ? 40 : 34) * k, bx = W / 2 - 12 * k - bs, by = -H / 2 + 12 * k;
         Bitmap service = t.app == null || "other".equals(t.app) ? null : HomeApps.serviceArt(getContext(), t.app);
-        if (gx != null && !gx[2].isEmpty()) {   // Games V1: the critics' score in a gold ring
-            drawScoreRing(c, gx[2], W / 2 - (W > 250 * k ? 16 : 12) * k, -H / 2 + (W > 250 * k ? 16 : 12) * k, (W > 250 * k ? 56 : 44) * k);
+        if (gx != null) {   // Games V1: clean art (the score is in the chips under the row)
         } else if (service != null && movie) {   // Movies V1: the app's round 3D icon, as on Home
             drawRoundIcon(c, service, W / 2 - 16 * k - 40 * k, -H / 2 + 16 * k, 40 * k);
         } else if (service != null) {
@@ -4889,7 +4916,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - Games V1 drawing: the countdown, the radar, Trending's chip, the score ring
 
-    private Paint cdChip, cdEyebrow, cdNum, cdUnit, cdColon, cdTitle, cdLine, cdPill, rdLabel, rdToday, ringText, ringTextSm, trendChip;
+    private Paint cdRank, cdChip, cdEyebrow, cdNum, cdUnit, cdColon, cdTitle, cdLine, cdPill, rdLabel, rdToday, ringText, ringTextSm, trendChip;
     private final RectF gvRect = new RectF();
     private android.graphics.RadialGradient rdGlow;
     private float gvPaintK;
@@ -4929,6 +4956,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cdTitle = Ui.text(Ui.displaySemibold, 56 * k, 0xFFFFFFFF);
         cdLine = Ui.text(Ui.regular, 19 * k, 0xD1FFFFFF);
         cdChip = Ui.text(Ui.semibold, 18 * k, 0xF2FFFFFF);
+        cdRank = Ui.text(Ui.displaySemibold, 30 * k, 0xFFFFFFFF);
+        cdRank.setColorFilter(IVORY_TEXT);
         cdChip.setColorFilter(IVORY_TEXT);
         cdPill = Ui.text(Ui.semibold, 16 * k, 0xFFFFFFFF);
         rdLabel = Ui.text(Ui.semibold, 15 * k, 0x99FFFFFF);
@@ -4987,7 +5016,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         shadows.draw(c, tmp, 28 * k, DEEP_BLUR * k, shadowDeep);
         // The game's 16:9 key art first (RAWG's or OpenCritic's, whole), then Steam's (cut), the textless square art.
         String art = !t.backdrop.isEmpty() ? t.backdrop : !t.keyArt.isEmpty() ? t.keyArt : !t.square.isEmpty() ? t.square : t.poster;
-        Bitmap b = Discover.get(getContext()).card(art, true, Math.round(artW * k), Math.round(fullH * k), 0);
+        Bitmap b = Discover.get(getContext()).card(art, true, Math.round(artW * k), Math.round(fullH * k), -1);
         fill.setShader(null);
         if (b != null) drawCoveredRound(c, b, gvRect, 28 * k, 1);   // rounded by the shader (no clip)
         else {
@@ -5053,7 +5082,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     // The top section's facts as glass chips, each with its 3D icon: 📅 the date · 🎮 the platforms · 👥 how many want it.
-    private static final String[] GV_CHIP_ICON = {"calendar", "controller", "busts"};
+    private static final String[] GV_CHIP_ICON = {"calendar", "controller", "busts", "star"};
     private Bitmap[] gvChipIcons;
     private String[] gvChipsFor;
     private final float[] gvChipW = new float[3];
@@ -5096,7 +5125,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             border.setStrokeWidth(1 * k);
             c.drawRoundRect(gvRect, h / 2, h / 2, border);
             border.setStrokeWidth(2 * k);
-            Bitmap b = gvChipIcons[i];
+            Bitmap b = gvChipIcons[i == 2 && tx.length > 6 ? 3 : i];   // rows: a star for the score
             if (b != null) {
                 float sc = icon / Math.max(b.getWidth(), b.getHeight());
                 gvRect.set(cx + 12 * k, y + (h - b.getHeight() * sc) / 2, cx + 12 * k + b.getWidth() * sc, y + (h + b.getHeight() * sc) / 2);
@@ -5125,50 +5154,70 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final java.util.WeakHashMap<Discover.Title, String[]> gvDesc = new java.util.WeakHashMap<>();
 
     /**
-     * The radar: a line from today on, the months under it, each game a round pin at its date. The focused pin's game
-     * fills the top section (no card of its own here).
+     * The Hype Track: months as faint bands, a line from today on, each game a round pin at its date, as big as how many
+     * follow it (IGDB hypes), on two lanes (a stem down to its date) so close dates never overlap; the wait from today to
+     * the shown game lit, with its days. The shown game fills the top section (no card of its own).
      */
     private void drawRadar(Canvas c, Discover.Row row, float y, boolean focused) {
         if (row.items.isEmpty()) return;
         gvPaints();
-        float L = MARGIN * k, R = CONTENT_R * k, ly = (y + RD_LINE - 2) * k;
+        float L = MARGIN * k, R = CONTENT_R * k, band = (y + GV_DESC_H + 24) * k, ly = band + (HT_LINE - 2) * k;
         fill.setShader(null);
+        for (int i = 0; i < gvMonthX.length && i < gvMonthLabel.length; i++) {   // the months, every other one tinted
+            float x = L + gvMonthX[i] * k, x2 = i + 1 < gvMonthX.length ? L + gvMonthX[i + 1] * k : R;
+            if (i % 2 == 1) {
+                fill.setColor(0x08F3EDE2);
+                c.drawRect(x, band, x2, band + HT_BAND * k, fill);
+            }
+            fill.setColor(0x12F3EDE2);
+            c.drawRect(x, band, x + 1 * k, band + HT_BAND * k, fill);
+            c.drawText(gvMonthLabel[i], x + 16 * k, band + 27 * k, rdLabel);
+        }
+        int col = Math.min(feedColOf(row.key), row.items.size() - 1);
+        int shown = focused ? col : gvCountIdx;
         fill.setColor(0x24F3EDE2);
         c.drawRoundRect(L, ly, R, ly + 4 * k, 2 * k, 2 * k, fill);
-        fill.setColor(0xFFFF8C5A);
-        c.drawRoundRect(L, ly, L + gvTodayX * k, ly + 4 * k, 2 * k, 2 * k, fill);
-        float tx = L + (gvTodayX - 4) * k, cy = ly + 2 * k;
+        float todayX = L + gvTodayX * k;
+        if (shown >= 0 && shown < gvPinX.length) {   // the wait, lit, with its days under it
+            fill.setColor(0xFFFF8C5A);
+            c.drawRoundRect(todayX, ly - 1 * k, L + gvPinX[shown] * k, ly + 5 * k, 3 * k, 3 * k, fill);
+            if (!gvPinDays[shown].isEmpty()) c.drawText(gvPinDays[shown], todayX + 48 * k, ly + 30 * k, rdToday);
+        }
         c.save();
-        c.translate(tx, cy);
+        c.translate(todayX, ly + 2 * k);
         fill.setShader(rdGlow);
         c.drawCircle(0, 0, 28 * k, fill);
         fill.setShader(null);
         fill.setColor(0xFFFFB27A);
         c.drawCircle(0, 0, 12 * k, fill);
         c.restore();
-        // Under the pins (they reach RD_LINE + 28), clear of them.
-        float labels = (y + RD_LINE + 52) * k;
-        c.drawText("TODAY", L + (gvTodayX - 30) * k, labels, rdToday);
-        for (int i = 0; i < gvMonthX.length && i < gvMonthLabel.length; i++)
-            c.drawText(gvMonthLabel[i], L + gvMonthX[i] * k, labels, rdLabel);
-        int col = Math.min(feedColOf(row.key), row.items.size() - 1);
+        c.drawText("TODAY", todayX - 20 * k, ly + 50 * k, rdToday);
         Discover d = Discover.get(getContext());
-        int pin = Math.round(56 * k);
         for (int i = 0; i < row.items.size() && i < gvPinX.length; i++) {
             Discover.Title t = row.items.get(i);
-            float px = L + gvPinX[i] * k, py = cy;
-            // Its icon (SteamGridDB, kept transparent), else its art cut round.
-            Bitmap b = !t.icon.isEmpty() ? d.logo(t.icon) : null;
-            if (b == null) b = d.card(!t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster, true, pin, pin, 0);
+            float s = gvPinSize[i] * k, px = L + gvPinX[i] * k, up = i % 2 == 1 ? 1 : 0;
+            float py = up > 0 ? band + HT_UP * k : ly + 2 * k;
+            fill.setColor(0xFFF3EDE2);
+            c.drawCircle(px, ly + 2 * k, 5 * k, fill);   // its date on the line
+            if (up > 0) {
+                fill.setColor(0x40F3EDE2);
+                c.drawRect(px - 1 * k, py + s / 2, px + 1 * k, ly, fill);
+            }
+            int size = Math.round(s);
+            Bitmap b = !t.icon.isEmpty() ? d.logo(t.icon) : null;   // its icon, else its art cut round
+            if (b == null) b = d.card(!t.square.isEmpty() ? t.square : !t.backdrop.isEmpty() ? t.backdrop : t.poster, true, size, size, -1);
             fill.setColor(0xFF2A2624);
-            c.drawCircle(px, py, pin / 2f, fill);
-            gvRect.set(px - pin / 2f, py - pin / 2f, px + pin / 2f, py + pin / 2f);
-            if (b != null) drawCoveredRound(c, b, gvRect, pin / 2f, 1);   // a circle: the art never past its edge
-            boolean on = focused && i == col;
+            c.drawCircle(px, py, s / 2, fill);
+            gvRect.set(px - s / 2, py - s / 2, px + s / 2, py + s / 2);
+            if (b != null) drawCoveredRound(c, b, gvRect, s / 2, 1);
+            boolean on = i == shown;
             border.setColor(on ? ACCENT : 0x80F3EDE2);
             border.setStrokeWidth((on ? 3 : 2) * k);
-            c.drawCircle(px, py, pin / 2f + (on ? 4.5f * k : 0), border);
+            c.drawCircle(px, py, s / 2 + (on ? 4.5f * k : 0), border);
             border.setStrokeWidth(2 * k);
+            rdLabel.setTextAlign(Paint.Align.CENTER);
+            c.drawText(gvPinDate[i], px, up > 0 ? py - s / 2 - 10 * k : py + s / 2 + 24 * k, rdLabel);
+            rdLabel.setTextAlign(Paint.Align.LEFT);
         }
     }
 
@@ -5306,6 +5355,43 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
     }
 
+    // Games V1 rows: under the cards, the focused game's title, its chips (as the top section's) and description.
+    private static final float GV_ROW_INFO = 24 + 40 + 16 + 40 + 18 + 3 * 19 * 1.45f + 8, GV_RANK_H = 48;
+    private final String[] gvRank = new String[30];
+
+    private static float infoH(String row) {
+        if (gameRow(row) && movieRow(row)) return GV_ROW_INFO + infoFixedH(row);
+        return MV_INFO;
+    }
+
+    /** What stays under a row when it isn't focused: Trending's places. */
+    private static float infoFixedH(String row) {
+        return Games.POPULAR.equals(row) ? GV_RANK_H : 0;
+    }
+
+    private void drawRanks(Canvas c, Discover.Row row, float[] xs, float cardsBottom) {
+        gvPaints();
+        for (int i = 0; i < row.items.size() && i < gvRank.length; i++) {
+            if ((xs[i] + MV_W) * k < 0 || xs[i] * k > w) continue;
+            if (gvRank[i] == null) gvRank[i] = String.valueOf(i + 1);
+            c.drawText(gvRank[i], xs[i] * k, (cardsBottom + 36) * k, cdRank);
+        }
+    }
+
+    private void drawGameInfo(Canvas c, Discover.Title t, float x, float cardsBottom, float a) {
+        if (a < 0.02f) return;
+        gvPaints();
+        mvPaints();
+        boolean layer = a < 0.99f;
+        if (layer) c.saveLayerAlpha(0, cardsBottom * k, w, (cardsBottom + GV_ROW_INFO) * k, Math.round(255 * a));
+        float y = cardsBottom + 24;
+        c.drawText(mvWrap(t.title, mvTitle, GV_DESC_W * k, 1)[0], x * k, (y + 36) * k, mvTitle);
+        String[] tx = gvText.get(t);
+        if (tx != null && tx.length >= 6) drawGvChips(c, tx, x * k, (y + 56) * k, (x + 1100) * k);
+        drawMovieInfo(c, t, x, y + 56 + 40 + 18 - MV_DESC_GAP, 1);
+        if (layer) c.restore();
+    }
+
     /** A movie's "Genre · Genre · ★7.6", made once per title (not on every frame of a card widening). */
     private String mvMetaOf(Discover.Title t) {
         String meta = mvMeta1.get(t);
@@ -5402,17 +5488,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void appsGeometry() {
         aClipTop = appsInTab() ? 200 : 0;
         aClipBottom = 1080;
-        aSearchTop = 222;
-        aSearchH = 72;
-        aLabel = 346;
-        aChipsTop = 368;
-        aChipH = 104;           // the suggested apps' icons (the chips under a search are CHIP_PILL tall)
-        aGridTop = 548;
+        // Apps V1 (Spotlight): the search bar and the category chips on one line; Most used as 6 glass tiles; All apps
+        // as round icons, 8 across.
+        aSearchTop = 236;
+        aSearchH = 64;
+        aLabel = 340;           // "Most used" (a heading's top)
+        aChipsTop = 412;
+        aChipH = 150;           // the tiles (the chips under a search are CHIP_PILL tall)
+        aGridTop = 690;         // "All apps" heading 78 above
         aCols = 8;
-        aW = 156;
-        aH = 156;
-        aGap = (CONTENT_R - MARGIN - aCols * aW) / (aCols - 1);   // 73
-        aRow = 240;
+        aW = 120;
+        aH = 120;
+        aGap = (CONTENT_R - MARGIN - aCols * aW) / (aCols - 1);
+        aRow = 190;
     }
 
     /** Apps: a pill under a search (the store's search, clearing it), and the search bar's width. */
@@ -5476,6 +5564,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void applyQuery(boolean keepFocus) {
         String focusedKey = keepFocus && gridIndex < others.size() ? others.get(gridIndex).key : null;
         List<HomeApps.Item> list = filterApps(appsAll, appsQuery);
+        if (appsCat != AppsLogic.ALL) {   // Apps V1: the chosen category's apps only
+            List<HomeApps.Item> kept = new ArrayList<>();
+            for (HomeApps.Item it : list) if (AppsLogic.matches(appsCat, HomeApps.category(getContext(), it.pkg))) kept.add(it);
+            list = kept;
+        }
         java.util.HashMap<String, Spring> before = new java.util.HashMap<>();
         for (int i = 0; i < gridFocus.length && i < others.size(); i++) before.put(others.get(i).key, gridFocus[i]);
         others = list;
@@ -5550,7 +5643,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (chips.size() >= SUGGEST_MAX) break;
                 for (HomeApps.Item it : appsAll) {
                     if (pkg.equals(it.pkg)) {
-                        chips.add(new Chip(CHIP_APP, it, it.label));
+                        Chip ch = new Chip(CHIP_APP, it, it.label);
+                        Long last = HomeApps.LAST_USED.get(pkg);
+                        ch.sub = AppsLogic.lastUsed(last == null ? 0 : last, System.currentTimeMillis(), java.util.TimeZone.getDefault());
+                        chips.add(ch);
                         break;
                     }
                 }
@@ -5655,7 +5751,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             gridFocus[i].target = t;
             if (snap) gridFocus[i].snap(t);
         }
-        if (appsZone != A_SEARCH || !voiceAvailable) searchPart = 0;
+        if (appsZone != A_SEARCH || (!voiceAvailable && searchPart == 1)) searchPart = 0;
         float st = sheetOpen && appsZone == A_SEARCH && searchPart == 0 ? 1 : 0;
         float kt = sheetOpen && appsZone == A_SEARCH && searchPart == 1 ? 1 : 0;
         changed |= searchFocus.target != st || keyboardFocus.target != kt;
@@ -5715,8 +5811,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 leaveApps(Z_TOP);
                 return;
             }
-            if (dx != 0 && voiceAvailable) {
-                searchPart = dx > 0 ? 1 : 0;   // → the keyboard button at the bar's end, ← back to the bar
+            if (dx != 0) {   // along the line: the bar, its keyboard button (with voice), the 5 category chips
+                int next = searchPart + dx;
+                if (next == 1 && !voiceAvailable) next += dx;
+                searchPart = Math.max(0, Math.min(1 + AppsLogic.CHIPS.length, next));
             } else if (dy > 0) {
                 if (!chips.isEmpty()) {
                     appsZone = A_SUGGEST;
@@ -6007,10 +6105,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.save();
         c.clipRect(0, aClipTop * k, w, aClipBottom * k);
         if (!inTab) c.drawText(Ui.tr("Apps"), left, 150 * k - shift, sheetTitle);   // in the tab, the tab names it
-        float sw = SEARCH_W * k, scx = w / 2f;
-        drawSearchBar(c, scx - sw / 2, scx + sw / 2, shift);
+        drawSearchBar(c, left, left + 720 * k, shift);
+        drawCategoryChips(c, left + 736 * k, shift);
         drawChips(c, left, right, shift);
         float gridTop = aGridTop * k - shift;
+        if (appsQuery.trim().isEmpty() && !appsAll.isEmpty()) drawAllAppsHeading(c, (aGridTop - 78) - shift / k);
         int n = others.size();
         if (appsAll.isEmpty()) {
             drawAppsLoading(c, left, gridTop);   // the first list read: the grid's shape, quietly
@@ -6312,16 +6411,37 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         boolean icons = appsQuery.trim().isEmpty();
-        if (icons) {
-            String label = suggestLabel;
-            c.drawText(label, w / 2f - appsSection.measureText(label) / 2, aLabel * k - shift, appsSection);
-            float size = aChipH * k, gap = 30 * k, total = chips.size() * size + (chips.size() - 1) * gap;
-            float x = w / 2f - total / 2, top = aChipsTop * k - shift;
+        if (icons) {   // Apps V1: "Most used" as 6 glass tiles: the icon, the name, when it was last opened
+            drawMovieHeading(c, suggestLabel, aLabel - shift / k);
+            apPaints();
+            float gap = 24 * k, tw = (right - left - 5 * gap) / 6, th = aChipH * k, top = aChipsTop * k - shift;
+            float x = left;
             for (Chip ch : chips) {
-                gridCell.set(x, top, x + size, top + size);
-                drawAppIcon(c, ch.app, gridCell, ch.focus.value, false, 260 * k);
-                ch.rect.set(cell);
-                x += size + gap;
+                float f = Ui.clamp(ch.focus.value);
+                ch.rect.set(x, top, x + tw, top + th);
+                fill.setShader(null);
+                fill.setColor(Ui.alpha(0xFFF3EDE2, 0.06f + 0.08f * f));
+                c.drawRoundRect(ch.rect, 28 * k, 28 * k, fill);
+                border.setColor(0x1FF3EDE2);
+                border.setStrokeWidth(1 * k);
+                c.drawRoundRect(ch.rect, 28 * k, 28 * k, border);
+                if (f > 0.01f) {   // the ivory ring, 4 out (no growing)
+                    float g = 4.5f * k;
+                    border.setColor(Ui.alpha(ACCENT, f));
+                    border.setStrokeWidth(3 * k);
+                    c.drawRoundRect(ch.rect.left - g, ch.rect.top - g, ch.rect.right + g, ch.rect.bottom + g, 28 * k + g, 28 * k + g, border);
+                }
+                border.setStrokeWidth(2 * k);
+                gridCell.set(x + 20 * k, top + 20 * k, x + 84 * k, top + 84 * k);
+                drawAppIcon(c, ch.app, gridCell, 0, false, 0);
+                String name = mvWrap(ch.label, apName, tw - 40 * k - (ch.sub.isEmpty() ? 0 : apSub.measureText(ch.sub) + 12 * k), 1)[0];
+                c.drawText(name, x + 20 * k, top + th - 22 * k, apName);
+                if (!ch.sub.isEmpty()) {
+                    apSub.setTextAlign(Paint.Align.RIGHT);
+                    c.drawText(ch.sub, x + tw - 20 * k, top + th - 22 * k, apSub);
+                    apSub.setTextAlign(Paint.Align.LEFT);
+                }
+                x += tw + gap;
             }
             return;
         }
@@ -6360,6 +6480,65 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             chipText.setTextSize(24 * k);
             x += wch + between;
         }
+    }
+
+    // Apps V1: the category chips beside the search bar (All · Watch · Listen · Sports · Tools), and the grid's heading.
+    private TextPaint apName, apSub, apChip;
+    private final float[] apChipW = new float[AppsLogic.CHIPS.length];
+    private int appsCat = AppsLogic.ALL;
+    private String apAllFor = "";
+    private String apAllText = "";
+    private static final int[] AP_DOT = {0xFFF3EDE2, 0xFFFF8C5A, 0xFF3BB86A, 0xFF4A8AD0, 0xFFA8A8A8};
+
+    private void apPaints() {
+        if (apName != null) return;
+        apName = new TextPaint(Ui.text(Ui.semibold, 19 * k, 0xFFFFFFFF));
+        apSub = new TextPaint(Ui.text(Ui.medium, 14 * k, 0x99FFFFFF));
+        apChip = new TextPaint(Ui.text(Ui.semibold, 18 * k, 0xFFFFFFFF));
+        for (Paint p : new Paint[] {apName, apSub}) p.setColorFilter(IVORY_TEXT);
+        for (int i = 0; i < apChipW.length; i++) apChipW[i] = apChip.measureText(AppsLogic.CHIPS[i]);
+    }
+
+    private void drawCategoryChips(Canvas c, float x, float shift) {
+        apPaints();
+        float h = 56 * k, cy = (aSearchTop + aSearchH / 2) * k - shift;
+        if (cy + h < aClipTop * k) return;
+        for (int i = 0; i < AppsLogic.CHIPS.length; i++) {
+            float wch = 16 * k + 10 * k + 10 * k + apChipW[i] + 20 * k;
+            boolean on = i == appsCat, focused = sheetOpen && appsZone == A_SEARCH && searchPart == 2 + i;
+            tmp.set(x, cy - h / 2, x + wch, cy + h / 2);
+            fill.setShader(null);
+            fill.setColor(on ? 0xFFEFE4D0 : 0x10F3EDE2);
+            c.drawRoundRect(tmp, h / 2, h / 2, fill);
+            border.setColor(0x2EF3EDE2);
+            border.setStrokeWidth(1 * k);
+            c.drawRoundRect(tmp, h / 2, h / 2, border);
+            if (focused) {
+                float g = 4.5f * k;
+                border.setColor(ACCENT);
+                border.setStrokeWidth(3 * k);
+                c.drawRoundRect(tmp.left - g, tmp.top - g, tmp.right + g, tmp.bottom + g, h / 2 + g, h / 2 + g, border);
+            }
+            border.setStrokeWidth(2 * k);
+            fill.setColor(AP_DOT[i]);
+            c.drawCircle(x + 21 * k, cy, 5 * k, fill);
+            apChip.setColor(on ? 0xFF1A1614 : 0xFFF3EDE2);
+            c.drawText(AppsLogic.CHIPS[i], x + 36 * k, cy + Ui.halfCap(apChip), apChip);
+            x += wch + 12 * k;
+        }
+    }
+
+    private void drawAllAppsHeading(Canvas c, float top) {
+        String name = appsCat == AppsLogic.ALL ? "All apps" : AppsLogic.CHIPS[appsCat];
+        drawMovieHeading(c, name, top);
+        String count = others.size() + " \u00B7 A\u2013Z";
+        if (!count.equals(apAllFor)) {   // measured when it changes, not per frame
+            apAllFor = count;
+            apAllText = count;
+        }
+        String[] parts = mvTexts.get("head|" + name);
+        float x = MARGIN * k + 64 * k + (parts == null ? 0 : mvHead.measureText(name) + 20 * k);
+        c.drawText(apAllText, x, (top + 38) * k, appsSection);
     }
 
     /** No app matches: say so, and where to look (the store's chip above), never a blank page. */
@@ -6820,6 +6999,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         RectF r;
         if (!sheetOpen && zone == WIDGETS) return;   // a widget is only read
         if (sheetOpen) {
+            if (appsZone == A_SEARCH && searchPart >= 2) {   // a category chip: the grid shows its apps
+                click.open();
+                appsCat = searchPart - 2;
+                applyQuery(false);
+                gridDirty = true;
+                wake();
+                return;
+            }
             if (appsZone == A_SEARCH) {         // OK on the search bar: voice (the keyboard button: typing)
                 click.open();
                 if (searchPart == 1 || !voiceAvailable) startTyping(); else startVoice();

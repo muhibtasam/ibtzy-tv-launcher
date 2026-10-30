@@ -141,6 +141,18 @@ public final class GamesV1Logic {
         return -1;
     }
 
+    /** A Hype Track pin's size: 44 px, bigger the more people follow it (IGDB hypes), 100 at most. */
+    public static int hypeSize(int hypes) {
+        return Math.round(44 + Math.min(56, (float) Math.sqrt(Math.max(0, hypes)) * 1.6f));
+    }
+
+    /** The lit stretch's label from until(): "Today", "Tomorrow", "20 days"; "" for none. */
+    public static String daysBadge(String until) {
+        if (until == null || until.isEmpty()) return "";
+        if (until.startsWith("in ")) return until.substring(3);
+        return Character.toUpperCase(until.charAt(0)) + until.substring(1);
+    }
+
     /** The top art's size: 16:9 (a trailer's picture whole, never cut), maxW wide at most, no taller than the room. */
     public static float[] artSize(float maxW, float roomH) {
         if (roomH <= 0 || maxW <= 0) return new float[] {0, 0};

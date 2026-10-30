@@ -531,6 +531,7 @@ final class Discover {
     private static final class CardKey {
         String path;
         int w, h;
+        boolean clean;   // no shading (Games V1: nothing is written on its art)
 
         CardKey(String path, int w, int h) {
             this.path = path;
@@ -539,13 +540,13 @@ final class Discover {
         }
 
         @Override public int hashCode() {
-            return (path.hashCode() * 31 + w) * 31 + h;
+            return ((path.hashCode() * 31 + w) * 31 + h) * 2 + (clean ? 1 : 0);
         }
 
         @Override public boolean equals(Object o) {
             if (!(o instanceof CardKey)) return false;
             CardKey x = (CardKey) o;
-            return x.w == w && x.h == h && x.path.equals(path);
+            return x.w == w && x.h == h && x.clean == clean && x.path.equals(path);
         }
     }
 
@@ -564,12 +565,14 @@ final class Discover {
             probe.path = path;
             probe.w = w;
             probe.h = h;
+            probe.clean = radius < 0;
             Bitmap b = cards.get(probe);
             if (b != null) return b;
             Long failedAt = failedCards.get(probe);   // a picture that failed: not asked again for 5 minutes (it was every frame)
             if (failedAt != null && System.currentTimeMillis() - failedAt < 300_000L) return null;
             if (pending.contains(probe)) return null;
             key = new CardKey(path, w, h);
+            key.clean = radius < 0;
             pending.add(key);
         }
         images.execute(() -> {
@@ -579,7 +582,7 @@ final class Discover {
                 // max(w, h·16/9) px across), else 640. TMDB paths: as before.
                 boolean big = path.startsWith("https://") ? Math.max(w, h * 16f / 9f) > 640 : w >= 1000;
                 Bitmap src = image(path, big ? "w1280" : wide ? "w780" : "w342");
-                if (src != null) out = compose(src, w, h, radius);
+                if (src != null) out = compose(src, w, h, radius < 0);
             } catch (Exception | OutOfMemoryError e) {
                 AppLog.w("for you image: " + e);
             }
@@ -719,7 +722,7 @@ final class Discover {
     }
 
     /** Cut like CSS object-fit: cover (centred, a little above the middle, where faces are), rounded, shaded below. */
-    private static Bitmap compose(Bitmap src, int w, int h, float radius) {
+    private static Bitmap compose(Bitmap src, int w, int h, boolean clean) {
         float sw = src.getWidth(), sh = src.getHeight(), want = (float) w / h;
         float cw = sw, ch = sh, cx = 0, cy = 0;
         if (sw / sh > want) {
@@ -746,7 +749,7 @@ final class Discover {
         c.drawRect(r, p);
         Paint shade = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
         shade.setShader(new LinearGradient(0, h * 0.45f, 0, h, 0x00000000, 0xD9000000, Shader.TileMode.CLAMP));
-        c.drawRect(r, shade);
+        if (!clean) c.drawRect(r, shade);
         src.recycle();
         return out;
     }

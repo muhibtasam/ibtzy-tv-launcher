@@ -89,6 +89,17 @@ public class GamesV1LogicTest {
         check("igdb art: bad sizes", GamesV1Logic.igdbArtwork(new int[] {0, -1}, new int[] {0, 5}), -1);
         check("igdb art null", GamesV1Logic.igdbArtwork(null, null), -1);
 
+        // Hype Track: a pin's size from how many follow it (44 none, 100 at most), its lane alternating.
+        check("hype none", GamesV1Logic.hypeSize(0), 44);
+        check("hype bad", GamesV1Logic.hypeSize(-5), 44);
+        check("hype fable", GamesV1Logic.hypeSize(429), 77);
+        check("hype gta", GamesV1Logic.hypeSize(1122), 98);
+        check("hype capped", GamesV1Logic.hypeSize(999999), 100);
+        check("days today", GamesV1Logic.daysBadge("today"), "Today");
+        check("days tomorrow", GamesV1Logic.daysBadge("tomorrow"), "Tomorrow");
+        check("days n", GamesV1Logic.daysBadge("in 20 days"), "20 days");
+        check("days none", GamesV1Logic.daysBadge(""), "");
+
         // The top art: 16:9 (a trailer's picture whole), 880 wide at most, as tall as the room allows.
         check("art fits", GamesV1Logic.artSize(880, 549), new float[] {880, 495});
         check("art shorter room", GamesV1Logic.artSize(880, 451), new float[] {802, 451});

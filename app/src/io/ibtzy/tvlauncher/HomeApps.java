@@ -490,6 +490,25 @@ final class HomeApps {
         return s == null ? "" : s.toLowerCase(Locale.ROOT).replace(" ", "").replace("+", "plus").trim();
     }
 
+    /** When each app was last in the foreground (Android's usage stats; read with mostUsed). */
+    static final Map<String, Long> LAST_USED = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Integer> CATEGORY = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The app's Spotlight category (AppsLogic), from its package and Android's declared category; kept. */
+    static int category(Context c, String pkg) {
+        if (pkg == null) return AppsLogic.TOOLS;
+        Integer have = CATEGORY.get(pkg);
+        if (have != null) return have;
+        int declared = -1;
+        try {
+            declared = c.getPackageManager().getApplicationInfo(pkg, 0).category;
+        } catch (Exception ignored) {
+        }
+        int cat = AppsLogic.category(pkg, declared);
+        CATEGORY.put(pkg, cat);
+        return cat;
+    }
+
     /** Up to `n` launchable TV apps by time in the foreground over the last 30 days; null without usage access. */
     static List<String> mostUsed(Context c, int n) {
         UsageStatsManager um = (UsageStatsManager) c.getSystemService(Context.USAGE_STATS_SERVICE);
@@ -517,6 +536,7 @@ final class HomeApps {
         Collections.sort(list, (a, b) -> Long.compare(b.getTotalTimeInForeground(), a.getTotalTimeInForeground()));
         List<String> out = new ArrayList<>();
         for (UsageStats u : list) {
+            if (u.getLastTimeUsed() > 0) LAST_USED.put(u.getPackageName(), u.getLastTimeUsed());   // Apps' tiles: when
             if (out.size() >= n) break;
             String pkg = u.getPackageName();
             if (u.getTotalTimeInForeground() < 60_000 || skip.contains(pkg) || out.contains(pkg)) continue;
