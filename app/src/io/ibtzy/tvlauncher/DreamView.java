@@ -45,7 +45,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     /** Photos 10% larger than the screen (the zoom goes up to 1.1 without upscaling). */
     private static final int PW = 2112, PH = 1188;
     private static final float MARGIN = 80, RIGHT = 1840, TITLE_W = 900, META_BASE = 1008;
-    private static final float DATE_BASE = 92, CLOCK_TOP = 120, CLOCK_SIZE = 200, QUOTES_GAP = 52;
+    private static final float DATE_BASE = 170, CLOCK_TOP = 210, CLOCK_SIZE = 260, QUOTES_GAP = 52;   // Ambient: centred
     private static final double DRIFT_PERIOD_S = 600;
     // The high and low and the stale prices line, made again only when they change (drawn on every frame).
     private String range = "", staleLine = "", staleFor = "";
@@ -441,11 +441,11 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             drawPhoto(canvas, incoming, placeB, e);
         }
 
+        canvas.drawColor(Math.round(160 * first) << 24 | 0x0A0809);   // Ambient: the photo soft and dim behind
         if (chromeDirty) recordChrome();
         chrome.setAlpha(first);
         chrome.draw(canvas);
         drawGlass(canvas, first, e);
-        drawCaptions(canvas, up);
     }
 
     private static float fadeIn(long elapsed, long duration) {
@@ -503,20 +503,21 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private void recordChrome() {
         Canvas c = chrome.beginRecording(w, h);
         try {
-            float right = RIGHT * k;
-            float x = right;
             HomeData.Weather wx = data.weather;
-            if (!Double.isNaN(wx.temp) && Prefs.weather()) {
-                String temp = HomeData.degrees(wx.temp);
-                float tw = cornerDate.measureText(temp);
-                c.drawText(temp, x - tw, DATE_BASE * k, cornerDate);
-                x -= tw + 10 * k;
-                String symbol = Symbols.weather(wx.code, wx.isDay);
-                float size = 30 * k, sw = Symbols.width(getContext(), symbol, size);
-                Symbols.draw(getContext(), c, symbol, x - sw / 2, DATE_BASE * k - Ui.halfCap(cornerDate), size, 0xEBFFFFFF);
-                x -= sw + 26 * k;
+            boolean weather = !Double.isNaN(wx.temp) && Prefs.weather();
+            // Ambient: "Friday, October 30  ☀ 35° · Karachi", centred over the clock.
+            String temp = weather ? HomeData.degrees(wx.temp) + (Prefs.city().isEmpty() ? "" : " · " + Prefs.city()) : "";
+            String symbol = weather ? Symbols.weather(wx.code, wx.isDay) : null;
+            float size = 30 * k, sw = symbol == null ? 0 : Symbols.width(getContext(), symbol, size);
+            float dw = cornerDate.measureText(date), tw = weather ? 26 * k + sw + 10 * k + cornerDate.measureText(temp) : 0;
+            float x = w / 2f - (dw + tw) / 2;
+            c.drawText(date, x, DATE_BASE * k, cornerDate);
+            if (weather) {
+                x += dw + 26 * k;
+                Symbols.draw(getContext(), c, symbol, x + sw / 2, DATE_BASE * k - Ui.halfCap(cornerDate), size, 0xEBFFFFFF);
+                c.drawText(temp, x + sw + 10 * k, DATE_BASE * k, cornerDate);
             }
-            c.drawText(date, x - cornerDate.measureText(date), DATE_BASE * k, cornerDate);
+            float right = w / 2f + clockW / 2;
 
             Glass g = glass;
             if (g != null && glassShader != null) {
@@ -528,11 +529,13 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                 cornerClock.getTextBounds(clock, 0, clock.length(), ink);
                 c.drawText(clock, right - ink.right, CLOCK_TOP * k - ink.top, cornerClock);
             }
+            drawHours(c, wx, weather);
+            drawPicks(c);
 
             // Compact prices under the clock, right-aligned.
             float base = (CLOCK_TOP + Ui.cap(cornerClock) / k + QUOTES_GAP) * k;
             float cap = Ui.cap(cornerQuote), gap = 7 * k, spacing = 26 * k;
-            int[] coins = HomeData.active();
+            int[] coins = Prefs.quotes() ? HomeData.active() : new int[0];
             int n = HomeData.coinCount();
             String[] values = new String[n];
             float[] glyphs = new float[n];
@@ -555,6 +558,82 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             chrome.endRecording();
         }
         chromeDirty = false;
+    }
+
+    private float clockW;   // the clock's width (it's centred)
+
+    /** Ambient: the next hours' weather as pills under the clock (every 2 hours, four of them). */
+    private void drawHours(Canvas c, HomeData.Weather wx, boolean weather) {
+        if (!weather || wx.hours.isEmpty()) return;
+        int n = Math.min(4, (wx.hours.size() + 1) / 2);
+        String[] t = new String[n];
+        float[] pw = new float[n];
+        float size = 24 * k, total = 0, gap = 14 * k, ph = 48 * k, y = 600 * k;
+        for (int i = 0; i < n; i++) {
+            int at = i * 2;
+            t[i] = Ui.clock(wx.hours.get(at)) + "  " + HomeData.degrees(wx.hourTemp.get(at));
+            pw[i] = 16 * k + Symbols.width(getContext(), Symbols.weather(wx.hourCode.get(at), wx.hourDay.get(at)), size) + 10 * k
+                    + hourPaint().measureText(t[i]) + 20 * k;
+            total += pw[i] + (i > 0 ? gap : 0);
+        }
+        float x = w / 2f - total / 2;
+        for (int i = 0; i < n; i++) {
+            int at = i * 2;
+            pill.setColor(0x1AF3EDE2);
+            c.drawRoundRect(x, y, x + pw[i], y + ph, ph / 2, ph / 2, pill);
+            String sym = Symbols.weather(wx.hourCode.get(at), wx.hourDay.get(at));
+            float sw = Symbols.width(getContext(), sym, size);
+            Symbols.draw(getContext(), c, sym, x + 16 * k + sw / 2, y + ph / 2, size, 0xFFF5B82E);
+            c.drawText(t[i], x + 16 * k + sw + 10 * k, y + ph / 2 + Ui.halfCap(hourPaint()), hourPaint());
+            x += pw[i] + gap;
+        }
+    }
+
+    private Paint hourText, pickLabel;
+    private final Paint pill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final android.graphics.RectF pickRect = new android.graphics.RectF();
+
+    private Paint hourPaint() {
+        if (hourText == null) hourText = Ui.text(Ui.semibold, 20 * k, 0xFFF3EDE2);
+        return hourText;
+    }
+
+    /** Ambient: "TONIGHT ON YOUR APPS" and the next three picks' stills, centred at the bottom. */
+    private void drawPicks(Canvas c) {
+        java.util.List<Recs.Pick> list = recs.showcase();
+        if (list.isEmpty()) return;
+        if (pickLabel == null) {
+            pickLabel = Ui.text(Ui.semibold, 18 * k, 0xFFFFB27A);
+            pickLabel.setLetterSpacing(0.16f);
+            pickLabel.setTextAlign(Paint.Align.CENTER);
+        }
+        int start = current == null ? 0 : Math.max(0, list.indexOf(current.pick)) + 1;
+        float cw = 320 * k, ch = 180 * k, gap = 22 * k, top = h - 90 * k - ch;
+        c.drawText((Recs.periodLabel() + " · " + Ui.tr("on your apps")).toUpperCase(java.util.Locale.ROOT), w / 2f, top - 26 * k, pickLabel);
+        float x = w / 2f - (3 * cw + 2 * gap) / 2;
+        boolean missing = false;
+        Discover d = Discover.get(getContext());
+        for (int i = 0; i < 3; i++) {
+            Recs.Pick p = list.get((start + i) % list.size());
+            Bitmap b = d.card(p.backdrop, true, Math.round(cw), Math.round(ch), 22 * k);
+            pickRect.set(x, top, x + cw, top + ch);
+            if (b != null) {   // rounded: the still as the shader of a rounded rectangle (recorded once a minute)
+                android.graphics.BitmapShader bs = new android.graphics.BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+                android.graphics.Matrix m = new android.graphics.Matrix();
+                m.setRectToRect(new android.graphics.RectF(0, 0, b.getWidth(), b.getHeight()), pickRect, android.graphics.Matrix.ScaleToFit.FILL);
+                bs.setLocalMatrix(m);
+                Paint bp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+                bp.setShader(bs);
+                c.drawRoundRect(pickRect, 22 * k, 22 * k, bp);
+            }
+            else {
+                missing = true;
+                pill.setColor(0x14F3EDE2);
+                c.drawRoundRect(pickRect, 22 * k, 22 * k, pill);
+            }
+            x += cw + gap;
+        }
+        if (missing) handler.postDelayed(() -> { chromeDirty = true; invalidate(); }, 2000);
     }
 
     private void drawGlass(Canvas c, float alpha, float e) {
@@ -584,7 +663,8 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         final Paint paint = new Paint(cornerClock);
         paint.clearShadowLayer();
         paint.setColor(0xFFFFFFFF);
-        final float right = RIGHT * k, top = CLOCK_TOP * k, scale = k;
+        clockW = paint.measureText(text);
+        final float right = w / 2f + clockW / 2, top = CLOCK_TOP * k, scale = k;
         final int gen = generation;
         worker.execute(() -> {
             Glass g = makeGlass(text, paint, right, top, scale);
@@ -776,7 +856,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
         // Prices near the bottom edge: small white logo + value, all four on one line.
         float cap = Ui.cap(quotePaint), spacing = 56 * k, gap = 10 * k;
-        int[] coins = HomeData.active();
+        int[] coins = Prefs.quotes() ? HomeData.active() : new int[0];
         String[] values = new String[HomeData.coinCount()];
         float total = spacing * (values.length - 1);
         for (int i = 0; i < values.length; i++) {
