@@ -8325,7 +8325,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             CC_HOME_SETTINGS = 6, CC_CLEAR = 7, CC_ALL = 8, CC_COUNT = 9;
     // Top 136: under the round buttons (44..112, ~116 when the focused one grows), never over them; ends at ~884,
     // above the dock's glass (910).
-    private static final float CC_W = 640, CC_TOP = 136, CC_PAD = 32, CC_GAP = 14, CC_TILE_H = 92, CC_ROW_H = 76;
+    private static final float CC_W = 640, CC_TOP = 136, CC_PAD = 32, CC_GAP = 14, CC_TILE_H = 92, CC_ROW_H = 100;
     private boolean ccOpen, ccOkDown, ccBackDown;
     private int ccIndex;
     private final Spring ccShow = new Spring(0.3f, 1f, 0);   // the panel's fade and scale (Explore's springs, faster)
@@ -8338,6 +8338,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Intent ccAirplayIntent;          // the TV's own AirPlay screen (or receiver app), found once
     private boolean ccAirplayInput;   // the TV lists an AirPlay input (switched to like HDMI)
     private static volatile Object[] airplayFound;   // {Intent, name} or {null, null}: looked up once per process
+    private Paint ccTitleIt, ccRing;
     private Paint ccTitle, ccName, ccSub, ccSection, ccPct;
 
     private void openCC() {
@@ -8531,12 +8532,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         y += CC_TILE_H * k + gap;
         ccRects[CC_VOLUME].set(x0, y, x1, y + 72 * k);
         y += 72 * k + 30 * k;
-        ccSectionY = y + 16 * k;   // "HOME SCREEN"
+        ccSectionY = y + 16 * k;   // "LAUNCHER"
         y += 34 * k;
-        ccRects[CC_REFRESH].set(x0, y, x0 + half, y + CC_ROW_H * k);
-        ccRects[CC_HOME_SETTINGS].set(x1 - half, y, x1, y + CC_ROW_H * k);
-        y += CC_ROW_H * k + gap;
-        ccRects[CC_CLEAR].set(x0, y, x1, y + CC_ROW_H * k);
+        float third = (x1 - x0 - 2 * gap) / 3;   // Refresh, Launcher, Clear history side by side
+        ccRects[CC_REFRESH].set(x0, y, x0 + third, y + CC_ROW_H * k);
+        ccRects[CC_HOME_SETTINGS].set(x0 + third + gap, y, x0 + 2 * third + gap, y + CC_ROW_H * k);
+        ccRects[CC_CLEAR].set(x1 - third, y, x1, y + CC_ROW_H * k);
         y += CC_ROW_H * k + gap;
         ccRects[CC_ALL].set(x0, y, x1, y + 76 * k);
         y += 76 * k + pad;
@@ -8779,7 +8780,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawCC(Canvas c) {
         if (ccFocus[0] == null) return;
         if (ccTitle == null) {
-            ccTitle = Ui.text(Ui.semibold, 40 * k, 0xFFFFFFFF);
+            ccTitle = Ui.text(Ui.displaySemibold, 42 * k, 0xFFF3EDE2);
+            ccTitleIt = Ui.text(Ui.displayItalic, 42 * k, 0xFFF3EDE2);
             ccName = Ui.text(Ui.semibold, 25 * k, 0xFFFFFFFF);
             ccSub = Ui.text(Ui.medium, 19 * k, 0xB3FFFFFF);
             ccSection = Ui.text(Ui.semibold, 19 * k, 0x99FFFFFF);
@@ -8798,11 +8800,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.offset(0, 14 * k);
         shadow.setColor(0x59000000);
         shadows.draw(c, tmp, radius, SHADOW_BLUR * k, shadow);
-        scene.liquid(c, ccPanel, radius, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 14 * k, 8 * k,
-                tone(0.6f, 0.45f), 1);   // the same material as the round buttons (light by day, smoked at night)
+        fill.setShader(null);   // warm dark under the dock's glass (its fill, hairline and lit edge): readable on any art
+        fill.setColor(0xF5161214);
+        c.drawRoundRect(ccPanel, radius, radius, fill);
+        drawFlatGlass(c, ccPanel, radius);
         // No white wash or outline on top: the glass's own light-catching edge is its outline (glass over glass
         // looked like a transparent panel with a white border).
-        c.drawText(Ui.tr("Settings"), ccPanel.left + CC_PAD * k, ccPanel.top + CC_PAD * k + Ui.halfCap(ccTitle) * 2, ccTitle);
+        float tb = ccPanel.top + CC_PAD * k + Ui.halfCap(ccTitle) * 2;   // "Control center": the launcher's serif headings
+        c.drawText(Ui.tr("Control") + " ", ccPanel.left + CC_PAD * k, tb, ccTitle);
+        c.drawText(Ui.tr("center"), ccPanel.left + CC_PAD * k + ccTitle.measureText(Ui.tr("Control") + " "), tb, ccTitleIt);
         // Wi-Fi and Bluetooth: their real state; the icon's circle lights up while it's on.
         String wifiSub = ccWifi == Radios.CONNECTED ? Ui.tr("Connected") : ccWifi == Radios.ON ? Ui.tr("Not connected")
                 : ccWifi == Radios.OFF ? Ui.tr("Off") : Ui.tr("Settings");
@@ -8815,11 +8821,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 false);   // an action like Turn off, not a switch: never drawn as "on"
         drawCCTile(c, CC_OFF, "power_settings_new", Ui.tr("Turn off"), Ui.tr("Screen off"), true, false);
         drawCCVolume(c);
-        c.drawText(Ui.tr("HOME SCREEN"), ccPanel.left + CC_PAD * k + 4 * k, ccSectionY, ccSection);
-        drawCCTile(c, CC_REFRESH, "refresh", Ui.tr("Refresh"), Ui.tr("New picks now"), false, false);
-        drawCCTile(c, CC_HOME_SETTINGS, "home", Ui.tr("Launcher"), Ui.tr("Tabs, theme, shelf"), false, false);
-        drawCCTile(c, CC_CLEAR, "delete", Ui.tr("Clear watch history"), Ui.tr("Titles opened from the cards"), false, false);
-        drawCCTile(c, CC_ALL, "settings", Ui.tr("All settings"), null, false, false);
+        ccSection.setColor(0xFFFFB27A);
+        c.drawText(Ui.tr("LAUNCHER"), ccPanel.left + CC_PAD * k + 4 * k, ccSectionY, ccSection);
+        drawCCTile(c, CC_REFRESH, "refresh", Ui.tr("Refresh"), null, false, false);
+        drawCCTile(c, CC_HOME_SETTINGS, "home", Ui.tr("Launcher"), null, false, false);
+        drawCCTile(c, CC_CLEAR, "delete", Ui.tr("Clear history"), null, false, false);
+        drawCCTile(c, CC_ALL, "settings", Ui.tr("TV settings"), null, false, false);
     }
 
     /**
@@ -8834,19 +8841,45 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float r = cell.height() * (chip ? 0.32f : 0.3f);
         // A lighter layer of the panel's glass, lit from the top; its edge catches the light. Focused: brighter body
         // and a full, wider edge (with the 3% growth), clearly visible from the sofa.
-        glassBody(c, cell, r, 0.13f + 0.25f * f);
-        focusOutline(c, cell, r, f);
-        glassEdge(c, cell, r, 0.45f + 0.55f * f, (1.2f + 1.3f * f) * k);
         fill.setShader(null);
+        fill.setColor(blend(0x0DF3EDE2, 0xFFF3EADB, f));
+        c.drawRoundRect(cell, r, r, fill);
+        border.setStrokeWidth(1 * k);
+        border.setColor(Ui.alpha(0xFFF3EDE2, 0.12f * (1 - f)));
+        c.drawRoundRect(cell, r, r, border);
+        if (f > 0.01f) {   // the launcher's focus: ivory ring 4 px out
+            if (ccRing == null) {
+                ccRing = new Paint(Paint.ANTI_ALIAS_FLAG);
+                ccRing.setStyle(Paint.Style.STROKE);
+            }
+            ccRing.setStrokeWidth(3 * k);
+            ccRing.setColor(Ui.alpha(0xFFFFFFE0, f));
+            tmp.set(cell);
+            tmp.inset(-5.5f * k, -5.5f * k);
+            c.drawRoundRect(tmp, r + 5.5f * k, r + 5.5f * k, ccRing);
+        }
+        border.setStrokeWidth(2 * k);
+        int ink = blend(0xFFF3EDE2, 0xFF1A1614, f);
+        ccName.setColorFilter(null);
+        ccSub.setColorFilter(null);
+        ccName.setColor(ink);
+        ccSub.setColor(Ui.alpha(ink, 0.7f));
         float x = cell.left + 26 * k * s;
         if (chip) {
             float d = 54 * k * s, ccx = x + d / 2;
-            fill.setColor(on ? 0xF2FFFFFF : 0x33FFFFFF);
+            fill.setColor(blend(on ? 0x33FFB27A : 0x1AF3EDE2, 0xFF1A1614, f));
             c.drawCircle(ccx, cy, d / 2, fill);
-            Symbols.draw(getContext(), c, symbol, ccx, cy, 26 * k * s, on ? 0xFF0A84FF : 0xF2FFFFFF);
+            Symbols.draw(getContext(), c, symbol, ccx, cy, 26 * k * s, blend(on ? 0xFFFFB27A : 0xFFF3EDE2, 0xFFFFF8EC, f));
             x += d + 18 * k * s;
+        } else if (i == CC_REFRESH || i == CC_HOME_SETTINGS || i == CC_CLEAR) {   // the Launcher row: icon over name
+            Symbols.draw(getContext(), c, symbol, cx, cy - 16 * k * s, 30 * k * s, ink);
+            ccName.setTextSize(20 * k * s);
+            ccName.setTextAlign(Paint.Align.CENTER);
+            c.drawText(name, cx, cy + 30 * k * s, ccName);
+            ccName.setTextAlign(Paint.Align.LEFT);
+            return;
         } else {
-            Symbols.draw(getContext(), c, symbol, x + 15 * k * s, cy, 30 * k * s, 0xF2FFFFFF);
+            Symbols.draw(getContext(), c, symbol, x + 15 * k * s, cy, 30 * k * s, ink);
             x += 30 * k * s + 22 * k * s;
         }
         float room = cell.right - x - (i == CC_ALL ? 56 : 18) * k;
@@ -8861,7 +8894,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fitPaint.set(ccSub);
             c.drawText(TextUtils.ellipsize(sub, fitPaint, room, TextUtils.TruncateAt.END).toString(), x, cy + 24 * k * s, ccSub);
         }
-        if (i == CC_ALL) Symbols.draw(getContext(), c, "chevron_right", cell.right - 34 * k * s, cy, 26 * k * s, 0xF2FFFFFF);
+        if (i == CC_ALL) Symbols.draw(getContext(), c, "chevron_right", cell.right - 34 * k * s, cy, 26 * k * s, ink);
     }
 
     /** The volume: a glass track, filled in white up to the level (the speaker icon on the white), the percentage. */

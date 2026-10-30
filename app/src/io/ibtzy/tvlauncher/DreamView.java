@@ -151,8 +151,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         scene.applyPalette();
         content.setUseCompositingLayer(true, null);
         try {
-            glassShader = new RuntimeShader(Shaders.GLASS_TEXT);
-            glassPaint.setShader(glassShader);
+            glassShader = null;   // the clock as the top bar's (serif, ivory), no glass
         } catch (RuntimeException | LinkageError e) {   // Android 8 to 12: no AGSL
             AppLog.w("glass clock unavailable: " + e.getMessage());
             glassShader = null;
@@ -258,10 +257,39 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
     // MARK: - Photos
 
+    // Your own photos: the Screensaver folder on the TV (/sdcard/Screensaver, or the app's own folder:
+    // Android/data/io.ibtzy.tvlauncher/files/Screensaver). Listed once per start, decoded one at a time at screen size.
+    private List<Recs.Pick> ownList;
+
+    private List<Recs.Pick> ownPhotos() {
+        if (ownList != null) return ownList;
+        ownList = new java.util.ArrayList<>();
+        File app = getContext().getExternalFilesDir("Screensaver");
+        File[] dirs = {new File(android.os.Environment.getExternalStorageDirectory(), "Screensaver"), app};
+        for (File dir : dirs) {
+            File[] files = dir == null ? null : dir.listFiles();
+            if (files == null) continue;
+            java.util.Arrays.sort(files);
+            for (File f : files) {
+                String n = f.getName().toLowerCase(java.util.Locale.ROOT);
+                if (!f.isFile() || !(n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") || n.endsWith(".webp"))) continue;
+                Recs.Pick p = new Recs.Pick();
+                p.kind = "photo";
+                p.id = f.getAbsolutePath().hashCode();
+                p.title = "";
+                p.backdrop = f.getAbsolutePath();
+                ownList.add(p);
+            }
+        }
+        if (!ownList.isEmpty()) java.util.Collections.shuffle(ownList);
+        return ownList;
+    }
+
     /** Loads the next photo in the background (one at a time); once ready, it comes in at the right moment. */
     private void prepareNext() {
         if (!running || decoding || prepared != null) return;
-        List<Recs.Pick> list = recs.showcase();
+        List<Recs.Pick> own = ownPhotos();
+        List<Recs.Pick> list = own.isEmpty() ? recs.showcase() : own;   // your photos first, else the picks
         if (list.isEmpty()) return;
         Slide last = incoming != null ? incoming : current;
         int start = 0;
@@ -287,7 +315,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             prepared = newSlide(pick, last.image, last.frost, last.lightCaption, last.lightClock);
             return;
         }
-        File file = recs.readyImage(pick);
+        File file = "photo".equals(pick.kind) ? new File(pick.backdrop) : recs.readyImage(pick);
         if (file == null) {
             failed.add(Recs.key(pick));   // the image is gone from disk: try the next one
             prepareNext();
@@ -517,7 +545,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                 Symbols.draw(getContext(), c, symbol, x + sw / 2, DATE_BASE * k - Ui.halfCap(cornerDate), size, 0xEBFFFFFF);
                 c.drawText(temp, x + sw + 10 * k, DATE_BASE * k, cornerDate);
             }
-            float right = w / 2f + clockW / 2;
+            float right = w / 2f + cornerClock.measureText(clock) / 2;   // centred
 
             Glass g = glass;
             if (g != null && glassShader != null) {
